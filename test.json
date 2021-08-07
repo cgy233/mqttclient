@@ -1,0 +1,25 @@
+{
+    "type": 2,
+    "data": [{
+            "lock_grid_info": "01",
+            "lock_physical_state": "0",
+            "lock_status": "0",
+            "lock_version": "1.0",
+            "lock_rkey": "1234",
+            "lock_EQ": "4000mA",
+            "lock_mac": "CB6AE6F785A1",
+            "lock_ckey": "1234"
+        },
+        {
+            "lock_grid_info": "02",
+            "lock_physical_state": "0",
+            "lock_status": "0",
+            "lock_version": "1.0",
+            "lock_rkey": "2348",
+            "lock_EQ": "6075mA",
+            "lock_mac": "C865B99A0FD4",
+            "lock_ckey": "8975"
+        }
+    ],
+    "cmd": "successed"
+}
