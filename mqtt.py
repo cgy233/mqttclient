@@ -48,36 +48,36 @@ def mqtt_client(status):
     gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
     time.sleep(1)
 
-    # try:
-    ticks = 0
-    time1 = time.time()
-    while True:
-        # 每隔三十秒发送一次所有设备状态信息
-        time2 = time.time()
-        if int(time2 - time1) >= 30:
-            mesg = util.checkAllDevicesStatus()
-            print("Check All BLE Devices Status.")
-            client.publish(evt_topic, mesg)
-            time1 = time2
-        
-        time.sleep_ms(500)
-        client.check_msg()
-        
-        if cmd != None:
-            util.selectFunction(client, evt_topic, cmd)
-            cmd = None
-        ticks += 1
+    try:
+        ticks = 0
+        time1 = time.time()
+        while True:
+            # 每隔三十秒发送一次所有设备状态信息
+            time2 = time.time()
+            if int(time2 - time1) >= 30:
+                mesg = util.checkAllDevicesStatus()
+                print("Check All BLE Devices Status.")
+                client.publish(evt_topic, mesg)
+                time1 = time2
+            
+            time.sleep_ms(500)
+            client.check_msg()
+            
+            if cmd != None:
+                util.selectFunction(client, evt_topic, cmd)
+                cmd = None
+            ticks += 1
 
-        time2 = time.time()
+            time2 = time.time()
 
-        if ticks >= (60 / 2):
-            client.ping()
-            gc.collect()
-            gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
-            ticks = 0
-    # except Exception as e:
-    #     print("Exception:", e)
-    # finally:
-    #     print('try - finally - disconnect')
-    #     client.disconnect()
-        # machine.reset()
+            if ticks >= (60 / 2):
+                client.ping()
+                gc.collect()
+                gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+                ticks = 0
+    except Exception as e:
+        print("Exception:", e)
+    finally:
+        print('try - finally - disconnect')
+        client.disconnect()
+        machine.reset()

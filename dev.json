@@ -2,10 +2,10 @@
     "Devices": [{
             "lock_grid_info": "88",
             "lock_EQ": "4000mA",
-            "lock_ckey": "2333",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "000001",
-            "lock_rkey": "8888",
+            "lock_rkey": "7777",
             "lock_physical_state": "0",
             "lock_mac": "CB6AE6F785A1"
         },

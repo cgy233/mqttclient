@@ -34,7 +34,7 @@ def updateAllLockInfo(data):
 		dev['lock_EQ'] = i['lock_EQ']
 		devs.append(dev)
 	if devs == []:
-		return -1
+		return "failed"
 	all_dev = {}
 	all_dev['Devices'] = devs
 	all_dev['lock_admin_rkey'] = data[0]['lock_admin_rkey']
@@ -45,7 +45,7 @@ def updateAllLockInfo(data):
 			f.close()
 			return 1
 	except Exception as e:
-		return -2
+		return -1
 # 配置指定锁的信息
 def updateLockInfo(data):
 	all_ = readJson(ble_json)
@@ -108,7 +108,7 @@ def monitorKeyboard(client, topic):
 	cs_pin.value(1)
 	r_pin.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING , handler=funv)
 # 返回所有的蓝牙设备信息
-def getDevicesInfo():
+def getDevicesInfo(data):
 	all_dev_info = {}
 	dl = readJson(ble_json)['Devices']
 	all_dev_info["data"] = dl
@@ -118,7 +118,8 @@ def getDevicesInfo():
 		return -1
 	return ujson.dumps(all_dev_info)
 # 返回指定蓝牙设备信息
-def getDeviceInfo(mac):
+def getDeviceInfo(data):
+	mac = data['lock_mac']
 	dev_info = {}
 	all_dev_info = readJson(ble_json)['Devices']
 	for i in all_dev_info:
@@ -172,14 +173,20 @@ def changePasswd(data):
 	except Exception as e:
 		return -1
 # 但开锁
-def unlock(mac):
-	pass
+def unlock(data):
+	data = '#0#270#{}#@'.format(''.join(data['lock_mac'].split(":")))
+	send(data)
+	return 1
 # 单关锁
-def lock(mac):
-	pass
+def lock(data):
+	data = '#1#270#{}#@'.format(''.join(data['lock_mac'].split(":")))
+	send(data)
+	return 1
 # 开关锁
-def dlock(mac):
-	pass
+def dlock(data):
+	data = '#2#270#{}#@'.format(''.join(data['lock_mac'].split(":")))
+	send(data)
+	return 1
 # 密码匹配
 def matchPasswd(request_passwd):
 	dl = readJson(ble_json)['Devices']
@@ -202,44 +209,22 @@ def matchPasswd(request_passwd):
 	return None, None
 # 根据Odoo后台下发指令进行操作
 def selectFunction(client, topic, data):
-	# func_list = {"SlocksConfig": "updateAllLockInfo",
-	# "SlockConfig": "updateLockInfo",
-	# "SqueryLocksStatus": "getDevicesInfo",
-	# "SqueryLockStatus": "getDeviceInfo",
-	# "Sunlock": "unlock",
-	# "Slock": "lock",
-	# "Sdlock": "dlock",
-	# "SchangePasswd": "changePasswd"
-	# }
+	func_list = {"SlocksConfig": updateAllLockInfo,
+	"SlockConfig": updateLockInfo,
+	"SqueryLocksStatus": getDevicesInfo,
+	"SqueryLockStatus": getDeviceInfo,
+	"SchangePasswd": changePasswd,
+	"Sunlock": unlock,
+	"Slock": lock,
+	"Sdlock": dlock
+	}
 	# 配置所有锁的信息
 	mesg = '{{"type": 2, "cmd": "{}"}}'
-	if data["cmd"] == "SlocksConfig":
-		mesg = mesg.format("successed") if updateAllLockInfo(data['data']) == 1 else  mesg.format("failed")
-	# 配置指定锁的信息
-	elif data["cmd"] == "SlockConfig":
-		mesg = mesg.format("successed") if updateLockInfo(data["data"]) == 1 else mesg.format("failed")
-	# 查询所有锁的信息
-	elif data["cmd"] == "SqueryLocksStatus":
-		result = getDevicesInfo()
-		mesg = mesg.format("failed") if result == -1 else result
-	# 查询指定锁的状态信息
-	elif data["cmd"] == "SqueryLockStatus":
-		result = getDeviceInfo(data['data']['lock_mac'])
-		mesg = mesg.format("failed") if result == -1 else result
-	# 单次开锁
-	elif data["cmd"] == "Sunlock":
-		data = '#0#270#{}#@'.format(''.join(data['data']['lock_mac'].split(":")))
-		send(data)
-	# 单次上锁
-	elif data["cmd"] == "Slock":
-		data = '#1#270#{}#@'.format(''.join(data['data']['lock_mac'].split(":")))
-		send(data)
-	# 开锁又上锁
-	elif data["cmd"] == "Sdlock":
-		data = '#2#270#{}#@'.format(''.join(data['data']['lock_mac'].split(":")))
-		send(data)
-	# 修改密码
-	elif data["cmd"] == "SchangePasswd":
-		result = changePasswd(data['data'])
-		mesg = mesg.format("changePasswdFailed") if result == -1 else mesg.format("changePasswdSuccessed")
+	result = func_list.get(data["cmd"])(data['data'])
+	if result == 1:
+		mesg = mesg.format("success")
+	elif result == -1:
+		mesg = mesg.format("failed")
+	else:
+		mesg = result
 	client.publish(topic, mesg)
