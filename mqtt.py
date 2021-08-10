@@ -42,11 +42,13 @@ def mqtt_client(status):
     client.subscribe(sub_topic, 1)
     print('Subscription succeeded.')
 
-    util.monitorKeyboard(client, evt_topic)
-
     gc.collect()
     gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
     time.sleep(1)
+
+    # 连接成功后扫描更新信息
+    util.monitorKeyboard(client, evt_topic)
+    util.checkLockEQStatu()
 
     try:
         ticks = 0

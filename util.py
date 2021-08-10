@@ -2,8 +2,11 @@ import ujson
 import time
 from machine import Pin, SPI
 
-ble_json = 'dev.json'
+ble_json = 'devices.json'
 gate_json = 'config.json'
+
+check_flag = 1
+check_id = None
 
 spi = SPI(baudrate=5000, polarity=0, phase=0, sck=Pin(16), mosi=Pin(14), miso=Pin(12),bits=8)
 cs_pin = Pin(13,Pin.OUT)
@@ -18,21 +21,12 @@ def readJson(file_name):
 			return dl
 	except OSError:
 		return -1
-
 # 配置所有锁的信息
 def updateAllLockInfo(data):
 	devs = []
 	for i in data:
-		dev = {}
-		dev['lock_mac'] = ''.join(i['lock_mac'].split(':'))
-		dev['lock_id'] = i['lock_id']
-		dev['lock_grid_info'] = i['lock_grid_info']
-		dev['lock_version'] = i['lock_version']
-		dev['lock_rkey'] = i['lock_rkey']
-		dev['lock_ckey'] = i['lock_ckey']
-		dev['lock_physical_state'] = i['lock_physical_state']
-		dev['lock_EQ'] = i['lock_EQ']
-		devs.append(dev)
+		del i['lock_status']
+		devs.append(i)
 	if devs == []:
 		return "failed"
 	all_dev = {}
@@ -48,16 +42,12 @@ def updateAllLockInfo(data):
 		return -1
 # 配置指定锁的信息
 def updateLockInfo(data):
+	del data['lock_status']
 	all_ = readJson(ble_json)
 	dl = all_['Devices']
 	for i in dl:
 		if i['lock_mac'] == ''.join(data['lock_mac'].split(':')):
-			i['lock_grid_info'] = data['lock_grid_info']
-			i['lock_version'] = data['lock_version']
-			i['lock_rkey'] = data['lock_rkey']
-			i['lock_ckey'] = data['lock_ckey']
-			i['lock_physical_state'] = data['lock_physical_state']
-			i['lock_EQ'] = data['lock_EQ']
+			i = data
 	all_['Devices'] = dl
 	dev_json = ujson.dumps(all_)
 	try:
@@ -69,26 +59,29 @@ def updateLockInfo(data):
 		return -1
 # 处理键盘设备传输的指令
 def responseKeyword(client, topic, mesg):
+	global check_id, check_flag
 	pwd_type = None
 	lock_mac = None
 	report = '{{"type": 2, "data": {{"datetime": "{}", "passwd_type": "{}", "lock_mac": "{}"}}, "cmd": "{}"}}'
 	tm = time.localtime()
-	# 监听键盘设备是否有密码返回
-	if mesg[:5] == '#290#':
-		pwd_type, lock_mac = matchPasswd(mesg[5:11])
-		report = report.format(tm, pwd_type, lock_mac, "successed") if pwd_type else report.format(tm, pwd_type, lock_mac, "unlock_failed")
-	elif mesg[:5] == '#200#':
+	if mesg[1:4] == '200':
 		report = report.format(tm, pwd_type, lock_mac, "unlock_successed")
-	elif mesg[:5] == '#201#':
+	elif mesg[1:4] == '201':
 		report = report.format(tm, pwd_type, lock_mac, "lock_successed")
-	elif mesg[:5] == '#000#':
-		print('51822 Started.')
+	elif mesg[1:4] == '202':
+		updateLockStatus(check_id, mesg[5:7], str(int('0x' + mesg[7:11])) + 'mA')
+		check_flag = 1
+	elif mesg[1:4] == '290':
+		pwd_type, lock_mac = matchPasswd(mesg[5:11])
+		report = report.format(tm, pwd_type, lock_mac, "successed") if pwd_type else report.format(tm, pwd_type, lock_mac, "CuserStorage")
+	elif mesg[1:4] == '400':
+		updateLockStatus(check_id, '0', '0mA')
+		check_flag = 1
 	client.publish(topic, report)
 # 向键盘设备发送指令
 def send(data) :
 	cs_pin.value(0)
-	buf = bytearray(data.encode("utf-8"))
-	spi.write(buf)
+	spi.write(bytearray(data.encode("utf-8")))
 	cs_pin.value(1)
 # 读取键盘设备传输的指令
 def read(client, topic):
@@ -96,65 +89,86 @@ def read(client, topic):
 	buf = bytearray(26)
 	spi.readinto(buf) 
 	cs_pin.value(1)
-	print(buf)
+	print(str(buf, 'utf8'))
 	if buf[0] == 35:
-		mesg =str(buf,'utf8')
-		responseKeyword(client, topic, mesg)
-		return mesg
-	return None
+		responseKeyword(client, topic, str(buf,'utf8'))
+# 向锁发送指令 扫描指定锁状态 电量
+def checkLockEQStatu():
+	global check_flag, check_id
+	t1 = time.time()
+	for i in readJson(ble_json)['Devices']:
+		check_id = i['lock_id']
+		while True:
+			t2 = time.time()
+			if check_flag:
+				send("#3#271#{}#@".format(check_id))
+				check_flag = 0
+				break
+			elif check_flag == 0 and (t2 - t1 >= 10):
+				check_flag = 1
+				t1 = t2
+				break
+# 初始化SPI
 def monitorKeyboard(client, topic):
 	def funv(v):
-		spi_buf = read(client, topic)
+		read(client, topic)
 	cs_pin.value(1)
 	r_pin.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING , handler=funv)
 # 返回所有的蓝牙设备信息
 def getDevicesInfo(data):
-	all_dev_info = {}
-	dl = readJson(ble_json)['Devices']
-	all_dev_info["data"] = dl
-	all_dev_info["type"] = 2 
-	all_dev_info["cmd"] = "successed" 
+	all_dev_info = {'type': 2, 'cmd': 'successed'}
+	all_dev_info["data"] = readJson(ble_json)['Devices']
 	if all_dev_info == {}:
 		return -1
 	return ujson.dumps(all_dev_info)
 # 返回指定蓝牙设备信息
 def getDeviceInfo(data):
 	mac = data['lock_mac']
-	dev_info = {}
+	dev_info = {'type': 2, 'cmd': 'successed'}
 	all_dev_info = readJson(ble_json)['Devices']
 	for i in all_dev_info:
 		if i['lock_mac'] == ''.join(mac.split(':')):
 			dev_info['data'] = i
-			dev_info['type'] = 2
-			dev_info['cmd'] = 'successed' 
 	if dev_info == {}:
 		return -1
 	return ujson.dumps(dev_info)
 # 检查所有设备状态
 def checkAllDevicesStatus():
-	status = {}
+	status = {'type': 3, 'cmd': 'CheartBeat'}
 	dl = readJson(ble_json)['Devices']
 	devs = []
 	for i in dl:
-		dev = {}
-		dev['lock_id'] = i['lock_id']
-		dev['lock_version'] = i['lock_version']
-		dev['lock_physical_state'] = i['lock_physical_state']
-		dev['lock_EQ'] = i['lock_EQ']
-		devs.append(dev)
+		del i['lock_mac']
+		del i['lock_grid_info']
+		del i['lock_rkey']
+		del i['lock_ckey']
+		devs.append(i)
 	dev = {}
 	gate_all_info = readJson(gate_json)
 	dev['gateway_id'] = gate_all_info['gateway_id']
 	dev['gateway_power'] =  gate_all_info['gateway_power']
-	ble_dev = {}
-	gate_dev = {}
-	ble_dev["lock"] = devs
-	gate_dev["gateway"] = dev
+	ble_dev = {'lock': devs}
+	gate_dev = {'gateway': dev}
 	
 	status['data'] = [ble_dev, gate_dev]
-	status['type'] = 3
-	status['cmd'] = 'CheartBeat'
 	return ujson.dumps(status)
+# 更新锁状态
+def updateLockStatus(check_id, lock_statu, lock_eq):
+	all_ = readJson(ble_json)
+	dl = all_['Devices']
+	for i in dl:
+		if i['lock_id'] == check_id:
+			i['lock_physical_state'] = lock_statu
+			i['lock_EQ'] = lock_eq
+	all_['Devices'] = dl
+	dev_json = ujson.dumps(all_)
+	try:
+		with open(ble_json, mode='w', encoding='utf-8') as f:
+			f.write(dev_json)
+			f.close()
+			return 1
+	except Exception as e:
+		return -1
 # 更新密码
 def changePasswd(data):
 	all_ = readJson(ble_json)
@@ -172,20 +186,17 @@ def changePasswd(data):
 			return 1
 	except Exception as e:
 		return -1
-# 但开锁
+# 单开锁
 def unlock(data):
-	data = '#0#270#{}#@'.format(''.join(data['lock_mac'].split(":")))
-	send(data)
+	send('#0#270#{}#@'.format(''.join(data['lock_mac'].split(":"))))
 	return 1
 # 单关锁
 def lock(data):
-	data = '#1#270#{}#@'.format(''.join(data['lock_mac'].split(":")))
-	send(data)
+	send('#1#270#{}#@'.format(''.join(data['lock_mac'].split(":"))))
 	return 1
 # 开关锁
 def dlock(data):
-	data = '#2#270#{}#@'.format(''.join(data['lock_mac'].split(":")))
-	send(data)
+	send('#2#270#{}#@'.format(''.join(data['lock_mac'].split(":"))))
 	return 1
 # 密码匹配
 def matchPasswd(request_passwd):
@@ -196,20 +207,17 @@ def matchPasswd(request_passwd):
 		cor_pwd1 = i['lock_grid_info'] + i['lock_rkey']  
 		cor_pwd2 = i['lock_grid_info'] + i['lock_ckey']  
 		if (cor_pwd1 == request_passwd) or (cor_pwd2 == request_passwd):
-			print('Passwd OK.')
+			# print('Passwd OK.')
 			lock_mac = i['lock_mac']
 			pwd_type = "rkey" if  (cor_pwd1 == request_passwd) else "ckey"
 			data = '#2#270#{}#@'.format(i['lock_mac'])
 			send(data)
-			print('send data: {}'.format(data))
+			# print('send data: {}'.format(data))
 			return pwd_type, lock_mac
-		else:
-			print('Passwd Error.')
-			return None, None
-	return None, None
+	return pwd_type, lock_mac
 # 根据Odoo后台下发指令进行操作
 def selectFunction(client, topic, data):
-	func_list = {"SlocksConfig": updateAllLockInfo,
+	func_dict = {"SlocksConfig": updateAllLockInfo,
 	"SlockConfig": updateLockInfo,
 	"SqueryLocksStatus": getDevicesInfo,
 	"SqueryLockStatus": getDeviceInfo,
@@ -218,9 +226,12 @@ def selectFunction(client, topic, data):
 	"Slock": lock,
 	"Sdlock": dlock
 	}
-	# 配置所有锁的信息
 	mesg = '{{"type": 2, "cmd": "{}"}}'
-	result = func_list.get(data["cmd"])(data['data'])
+	if data['cmd'] not in func_dict.keys():
+		mesg = mesg.format("cmdNotFound")
+		client.publish(topic, mesg)
+		return 
+	result = func_dict.get(data["cmd"])(data['data'])
 	if result == 1:
 		mesg = mesg.format("success")
 	elif result == -1:
