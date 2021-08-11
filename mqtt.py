@@ -1,9 +1,9 @@
+import util
 import machine
 import gc
 from machine import SPI, Pin 
 from mqttClient import MQTTClient
 import time
-import util
 
 cmd = None
 def mqtt_callback(client, topic, message):

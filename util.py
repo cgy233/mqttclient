@@ -66,20 +66,21 @@ def responseKeyword(client, topic, mesg):
 	tm = time.localtime()
 	if mesg[1:4] == '200':
 		report = report.format(tm, pwd_type, lock_mac, "unlock_successed")
-	elif mesg[1:4] == '201':
+	if mesg[1:4] == '201':
 		report = report.format(tm, pwd_type, lock_mac, "lock_successed")
 	elif mesg[1:4] == '202':
 		updateLockStatus(check_id, mesg[5:7], str(int('0x' + mesg[7:11])) + 'mA')
 		check_flag = 1
 	elif mesg[1:4] == '290':
 		pwd_type, lock_mac = matchPasswd(mesg[5:11])
-		report = report.format(tm, pwd_type, lock_mac, "successed") if pwd_type else report.format(tm, pwd_type, lock_mac, "CuserStorage")
+		report = report.format(tm, pwd_type, lock_mac, "successed") if pwd_type != None else report.format(tm, pwd_type, lock_mac, "unlock_failed")
 	elif mesg[1:4] == '400':
 		updateLockStatus(check_id, '0', '0mA')
 		check_flag = 1
 	client.publish(topic, report)
 # 向键盘设备发送指令
 def send(data) :
+	print(data)
 	cs_pin.value(0)
 	spi.write(bytearray(data.encode("utf-8")))
 	cs_pin.value(1)
@@ -95,18 +96,13 @@ def read(client, topic):
 # 向锁发送指令 扫描指定锁状态 电量
 def checkLockEQStatu():
 	global check_flag, check_id
-	t1 = time.time()
 	for i in readJson(ble_json)['Devices']:
-		check_id = i['lock_id']
 		while True:
-			t2 = time.time()
 			if check_flag:
+				check_id = i['lock_id']
 				send("#3#271#{}#@".format(check_id))
 				check_flag = 0
-				break
-			elif check_flag == 0 and (t2 - t1 >= 10):
-				check_flag = 1
-				t1 = t2
+				time.sleep(1)
 				break
 # 初始化SPI
 def monitorKeyboard(client, topic):
@@ -212,7 +208,6 @@ def matchPasswd(request_passwd):
 			pwd_type = "rkey" if  (cor_pwd1 == request_passwd) else "ckey"
 			data = '#2#270#{}#@'.format(i['lock_mac'])
 			send(data)
-			# print('send data: {}'.format(data))
 			return pwd_type, lock_mac
 	return pwd_type, lock_mac
 # 根据Odoo后台下发指令进行操作
