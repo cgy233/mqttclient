@@ -64,13 +64,17 @@ def responseKeyword(client, topic, mesg):
 	lock_mac = None
 	report = '{{"type": 2, "data": {{"datetime": "{}", "passwd_type": "{}", "lock_mac": "{}"}}, "cmd": "{}"}}'
 	tm = time.localtime()
-	if mesg[1:4] == '200':
-		report = report.format(tm, pwd_type, lock_mac, "unlock_successed")
-	if mesg[1:4] == '201':
+	if mesg[1:4] == '000':
+		check_flag = 1
+	elif mesg[1:4] == '200':
 		report = report.format(tm, pwd_type, lock_mac, "lock_successed")
+	elif mesg[1:4] == '201':
+		report = report.format(tm, pwd_type, lock_mac, "unlock_successed")
 	elif mesg[1:4] == '202':
 		updateLockStatus(check_id, mesg[5:7], str(int('0x' + mesg[7:11])) + 'mA')
 		check_flag = 1
+	elif mesg[1:4] == '203':
+		report = report.format(tm, pwd_type, lock_mac, "dlock_successed")
 	elif mesg[1:4] == '290':
 		pwd_type, lock_mac = matchPasswd(mesg[5:11])
 		report = report.format(tm, pwd_type, lock_mac, "successed") if pwd_type != None else report.format(tm, pwd_type, lock_mac, "unlock_failed")
@@ -233,4 +237,5 @@ def selectFunction(client, topic, data):
 		mesg = mesg.format("failed")
 	else:
 		mesg = result
+	time.sleep_ms(50)
 	client.publish(topic, mesg)

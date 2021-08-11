@@ -1,6 +1,9 @@
 import ubinascii
 import socket
-from json_util import status
+import ujson
+import time
+import machine
+from json_util import status, saveJson
 
 def parseHeader(headerLine):
     kwDict = {}
@@ -73,7 +76,7 @@ def httpServer():
         reqDict = {}
 
         if cb:
-            data = "{}('{}')" .format(cb, json.dumps(status))
+            data = "{}('{}')" .format(cb, ujson.dumps(status))
             cb = None
         else:
             data = ''

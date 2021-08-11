@@ -9,7 +9,7 @@
 			"type": "python",
 			"request": "launch",
 			"program": "${file}",
-			"pythonPath": "D:\\Program Files\\Anaconda3\\envs\\games\\python.exe",
+			"python": "D:\\Program Files\\Anaconda3\\envs\\games\\python.exe",
 			"console": "integratedTerminal"
 		}
 	]

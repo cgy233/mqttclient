@@ -66,11 +66,10 @@ def mqtt_client(status):
             client.check_msg()
             
             if cmd != None:
+                print('selecting...')
                 util.selectFunction(client, evt_topic, cmd)
                 cmd = None
             ticks += 1
-
-            time2 = time.time()
 
             if ticks >= (60 / 2):
                 client.ping()
