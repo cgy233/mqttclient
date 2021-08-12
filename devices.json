@@ -1,103 +1,103 @@
 {
     "Devices": [{
             "lock_grid_info": "66",
-            "lock_physical_state": "02",
-            "lock_mac": "CB6AE6F785A1",
+            "lock_EQ": "5990mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000001",
             "lock_rkey": "6666",
-            "lock_EQ": "6011mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "02",
+            "lock_mac": "CB6AE6F785A1"
         },
         {
             "lock_grid_info": "99",
-            "lock_physical_state": "02",
-            "lock_mac": "E5DFC975A595",
+            "lock_EQ": "5800mA",
+            "lock_ckey": "9999",
             "lock_version": "1.0",
             "lock_id": "L001000121000002",
             "lock_rkey": "2348",
-            "lock_EQ": "5800mA",
-            "lock_ckey": "9999"
+            "lock_physical_state": "02",
+            "lock_mac": "E5DFC975A595"
         },
         {
             "lock_grid_info": "33",
-            "lock_physical_state": "02",
-            "lock_mac": "EF02423D916A",
+            "lock_EQ": "5976mA",
+            "lock_ckey": "7777",
             "lock_version": "1.0",
             "lock_id": "L001000121000003",
             "lock_rkey": "3333",
-            "lock_EQ": "6046mA",
-            "lock_ckey": "7777"
+            "lock_physical_state": "02",
+            "lock_mac": "EF02423D916A"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "3958mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000004",
             "lock_rkey": "8888",
-            "lock_EQ": "3979mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "02",
+            "lock_mac": "C764505B2C15"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "3536mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000005",
             "lock_rkey": "8888",
-            "lock_EQ": "3536mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "02",
+            "lock_mac": "C764505B2C15"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "0mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000006",
             "lock_rkey": "8888",
-            "lock_EQ": "3536mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "0",
+            "lock_mac": "C764505B2C15"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "0mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000007",
             "lock_rkey": "8888",
-            "lock_EQ": "3536mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "0",
+            "lock_mac": "C764505B2C15"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "0mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000008",
             "lock_rkey": "8888",
-            "lock_EQ": "3536mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "0",
+            "lock_mac": "C764505B2C15"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "0mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000009",
             "lock_rkey": "8888",
-            "lock_EQ": "3536mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "0",
+            "lock_mac": "C764505B2C15"
         },
         {
             "lock_grid_info": "88",
-            "lock_physical_state": "02",
-            "lock_mac": "C764505B2C15",
+            "lock_EQ": "0mA",
+            "lock_ckey": "2341",
             "lock_version": "1.0",
             "lock_id": "L001000121000012",
             "lock_rkey": "8888",
-            "lock_EQ": "3536mA",
-            "lock_ckey": "2341"
+            "lock_physical_state": "0",
+            "lock_mac": "C764505B2C15"
         }
     ],
     "lock_admin_rkey": "2222"

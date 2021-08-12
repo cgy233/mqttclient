@@ -1,13 +1,148 @@
-import socket
 import ujson
 import gc
 import network
 import machine
 import utime
 import time
-from json_util import status, createJson, saveJson
+import ubinascii
+import socket
+from ure import compile
 from mqtt import mqtt_client
-from httpserver import httpServer
+
+status = {
+    "gateway_id": "W001000121000002",
+    "gateway_name": "",
+    "ssid": "",
+    "skey": "",
+    "gateway_mac": "",
+    "gateway_port": "80",
+    "gateway_version": "1",
+    "gateway_power": "",
+    "mqtt_clientid": "",
+    "mqtt_user": "",
+    "mqtt_pwd": "",
+    "mqtt_skey": ""
+}
+
+def createJson():
+    global status
+    
+    status['gateway_name'] = 'W' + ubinascii.hexlify(machine.unique_id()).decode('ascii')
+
+    ap = network.WLAN(network.AP_IF)
+    status['gateway_mac'] = ubinascii.hexlify(ap.config('mac')).decode('ascii')
+    status['gateway_port'] = '81'
+
+    with open("config.json","w") as dump_f:
+        ujson.dump(status, dump_f)
+    time.sleep(1)  # wait 1 seconds
+
+    ap.active(True)
+    ap.config( essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
+    time.sleep(1)  # wait 1 seconds
+
+    machine.reset()
+
+def saveJson():
+    global status
+    with open("config.json","w") as dump_f:
+        ujson.dump(status, dump_f)
+    time.sleep(1)  # wait 1 seconds
+
+def parseHeader(headerLine):
+    kwDict = {}
+
+    # print(headerLine)
+    # time.sleep(1)  # wait 1 seconds 
+    bytesline = headerLine
+    headerLine = headerLine.decode('ascii')
+
+    if headerLine.find('?') >= 0:
+        _percent_pat = compile(b'%[A-Fa-f0-9][A-Fa-f0-9]')
+        hex_to_byte = lambda match_ret: \
+                  ubinascii.unhexlify(match_ret.group(0).replace(b'%', b'').decode('ascii'))
+
+        bytesline = _percent_pat.sub(hex_to_byte, bytesline)
+        headerLine = bytesline.decode('ascii')
+
+        # print('1', headerLine)
+        headerLine = headerLine.split('?')[1]
+        # print('2', headerLine)
+        lists = headerLine.split('&')
+        for kw in lists:
+            kwlist = kw.split('=')
+            kwDict[kwlist[0]] =  kwlist[1]
+            # print('3', kwlist[1])
+
+        return kwDict
+
+def httpServer():
+    global status
+    bodyLen = None
+    
+    template = """HTTP/1.1 200 OK Content-Length: {length}{json}
+
+{data}"""
+    reqDict = {}
+    cb = None
+    needReset = False
+    addr = socket.getaddrinfo('0.0.0.0', int(status['gateway_port']))[0][-1]
+
+    with open('index.html', 'r', encoding='utf8') as f:
+        reg_data = f.read()
+        f.close()
+
+    s = socket.socket()
+    s.bind(addr)
+    s.listen(1)
+
+    print('listening on', addr)
+
+    while True:
+        cl, addr = s.accept()
+
+        request = cl.recv(1024).decode()
+        method = request.split(' ')[0]
+        src  = request.split(' ')[1]
+
+        cl_file=cl.makefile('rwb',0)
+        while True:
+            line = cl_file.readline()
+            ret = parseHeader(line)
+
+            if ret:
+                reqDict = ret
+
+            if (not line) or (line == b'\r\n'):
+                break
+        if 'callbacks' in reqDict.keys():
+            cb = reqDict['callbacks']
+            # print('4', cb)
+        
+        for key in status:
+            if key in reqDict.keys():
+                status[key] = reqDict[key]
+                needReset = True
+                print('5', key)
+
+        saveJson()
+        reqDict = {}
+
+        if cb:
+            data = "{}('{}')" .format(cb, ujson.dumps(status))
+            cb = None
+        else:
+            data = ''
+
+        response = template.format(length=len(data), json=data, data=reg_data)
+        print(data)
+        time.sleep(1)  # wait 1 seconds
+        cl.send(response)
+        cl.close()
+
+        if needReset:
+            time.sleep(1)  # wait 1 seconds                
+            machine.reset()
 
 def http_post(url, req):
     jstr = ''
@@ -32,22 +167,25 @@ def http_post(url, req):
 
     jstr = jstr.split('\r\n\r\n')
     if len(jstr) == 2:
-		return ujson.loads(jstr[1])
+        return ujson.loads(jstr[1])
 def login():
-    template = '''POST /xiaosun/getMqttInfo/ HTTP/1.1
+    template = """POST /api/xiaosun/getMqttInfo/?gateway_id=W001000121000001&gateway_mac=b4e62d3073b0 HTTP/1.1
+User-Agent: PostmanRuntime/7.28.3
 Accept: */*
-Host: 192.168.52.36:8014
+Postman-Token: c4aed8d3-ba08-4fd2-86f3-d41dbb9f3511
+Host: erp.xiao-sun.cn
 Accept-Encoding: gzip, deflate, br
 Connection: keep-alive
-Content-Type: application/x-www-form-urlencoded
-Content-Length: {length} 
-Cookie: frontend_lang=zh_CN; session_id=767a0763e8312a1dfa9e612c4be6aeae0864faa5
+Cookie: session_id=7e3d6ffc4143178ea40ef16015ab764ac9e02b6f
+Content-Length: 0
 
-{data}'''
-    data = 'gateway_id={}&gateway_mac={}&gateway_power={}&gateway_version={}'.format(status['gateway_id'],
-    status['gateway_mac'], status['gateway_power'],status['gateway_version'])
-    req = template.format(length=len(data), data=data)
-    triple = http_post('http://192.168.52.36:8014/xiaosun/getMqttInfo/', req)
+"""
+
+    # data = 'gateway_id={}&gateway_mac={}gateway_power={}&gateway_version={}'.format(status['gateway_id'],
+    # status['gateway_mac'], status['gateway_power'],status['gateway_version'])
+    # req = template.format(gateway_id=status['gateway_id'], gateway_mac=status['gateway_mac'])
+    req = template
+    triple = http_post('http://erp.xiao-sun.cn/api/xiaosun/getMqttInfo/', req)
     print(triple['msg'])
     triple = triple['msg']
 
@@ -64,41 +202,44 @@ Cookie: frontend_lang=zh_CN; session_id=767a0763e8312a1dfa9e612c4be6aeae0864faa5
     return client_id, USER, PWD
 
 if __name__ == '__main__':
-    try:
-        with open("config.json",'r') as load_f:
-            status = ujson.load(load_f)
-        load_f.close()
-    except OSError:
-        createJson()
+    pass
+    # try:
+    #     with open("config.json",'r') as load_f:
+    #         status = ujson.load(load_f)
+    #     load_f.close()
+    # except OSError:
+    #     createJson()
 
-    ap_if = network.WLAN(network.AP_IF)
-    sta_if = network.WLAN(network.STA_IF)
-    if status['ssid'] == '' or status['skey'] == '':      # AP Mode
-        ap_if.active(True)
-        sta_if.active(False)
-    else:                       # STA Mode
-        ap_if.active(False)
-        sta_if.active(True)
-        sta_if.connect(status['ssid'], status['skey'])
-        time.sleep(10)  # try 10 seconds
-        sta_if.ifconfig()
+    # ap_if = network.WLAN(network.AP_IF)
+    # sta_if = network.WLAN(network.STA_IF)
+    # if status['ssid'] == '' or status['skey'] == '':      # AP Mode
+    #     ap_if.active(True)
+    #     sta_if.active(False)
+    # else:                       # STA Mode
+    #     ap_if.active(False)
+    #     sta_if.active(True)
+    #     sta_if.connect(status['ssid'], status['skey'])
+    #     time.sleep(10)  # try 10 seconds
+    #     sta_if.ifconfig()
 
-    if status['gateway_port'] == '80':
-        httpServer()
-    elif sta_if.isconnected():
-        print('Wifi Connection successful.')
-        gc.collect()
-        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
-        # uos.dupterm(None, 1) # disable REPL on UART(0)
-        # client_id, USER, PWD = login()
-        # if client_id:
-        #     status['mqtt_clientid'] = client_id
-        #     status['mqtt_user'] = USER
-        #     status['mqtt_pwd'] = PWD
-        mqtt_client(status)
-    else:                             # AP Mode
-        print('Wifi Connection failed.Set hotspot mode...')
-        ap_if.active(True)
-        sta_if.active(False)
-        status['gateway_port'] = '80'
-        httpServer()
+    # if sta_if.isconnected():
+    #     print('Wifi Connection successful.')
+    #     gc.collect()
+    #     gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+    #     # uos.dupterm(None, 1) # disable REPL on UART(0)
+    #     client_id, USER, PWD = login()
+    #     if client_id:
+    #         status['mqtt_clientid'] = client_id
+    #         status['mqtt_user'] = USER
+    #         status['mqtt_pwd'] = PWD
+    #     mqtt_client(status)
+    # elif status['gateway_port'] == '80':
+    #     ap_if.active(True)
+    #     sta_if.active(False)
+    #     httpServer()
+    # else:                             # AP Mode
+    #     print('Wifi Connection failed.Set hotspot mode...')
+    #     ap_if.active(True)
+    #     sta_if.active(False)
+    #     status['gateway_port'] = '80'
+    #     httpServer()

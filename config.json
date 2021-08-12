@@ -1,14 +1,14 @@
 {
-    "gateway_id": "Wb3733000",
-    "gateway_name": "Wb3733000",
-    "ssid": "gf1969",
-    "skey": "qcgsnb196",
+    "mqtt_user": "MNZ2V9ORYGWb3733000;12010126;EHQKJ;1664700550",
+    "skey": "qcgsnb1969",
     "gateway_mac": "b4e62d3073b0",
-    "gateway_port": "81",
-    "gateway_version": "1",
-    "gateway_power": "3500mA",
+    "gateway_id": "W001000121000001",
     "mqtt_clientid": "MNZ2V9ORYGWb3733000",
-    "mqtt_user": "MNZ2V9ORYGWb3733000;12010126;6MOHP;1664058122",
-    "mqtt_pwd": "ec70bf2596511f42870816a2d46afb7e4c0e079268912ccb76574718b5526558;hmacsha256",
-    "mqtt_skey": ""
+    "mqtt_pwd": "cb88540c4d22390ee7af7a064737f03ac7dcb6dac932d9d0a38a17c32fc861a4;hmacsha256",
+    "mqtt_skey": "",
+    "gateway_port": "81",
+    "ssid": "gf1969",
+    "gateway_name": "Wb3733000",
+    "gateway_version": "1",
+    "gateway_power": "3500mA"
 }
