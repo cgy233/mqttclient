@@ -38,7 +38,7 @@ def createJson():
     time.sleep(1)  # wait 1 seconds
 
     ap.active(True)
-    ap.config( essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
+    ap.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
     time.sleep(1)  # wait 1 seconds
 
     machine.reset()
@@ -61,10 +61,10 @@ Content-Type: text/html
         f.close()
 
     # print(headerLine)
-    # time.sleep(1)  # wait 1 seconds 
+    time.sleep(1)  # wait 1 seconds 
     bytesline = headerLine
     headerLine = headerLine.decode('ascii')
-    print(headerLine)
+    # print(headerLine)
 
     if headerLine.find('GET /index') >= 0:
         return reg_content
@@ -77,15 +77,15 @@ Content-Type: text/html
         bytesline = _percent_pat.sub(hex_to_byte, bytesline)
         headerLine = bytesline.decode('ascii')
 
-        print('1', headerLine)
+        # print('1', headerLine)
         headerLine = headerLine.split('?')[1]
         headerLine = headerLine.split(' ')[0]
-        print('2', headerLine)
+        # print('2', headerLine)
         lists = headerLine.split('&')
         for kw in lists:
             kwlist = kw.split('=')
             kwDict[kwlist[0]] =  kwlist[1]
-            print('3', kwlist[1])
+            # print('3', kwlist[1])
 
         return kwDict
 
@@ -112,29 +112,21 @@ def httpServer():
     while True:
         flag = 0
         cl, addr = s.accept()
-
         cl_file=cl.makefile('rwb',0)
 
-
         while True:
-            print('param.')
             line = cl_file.readline()
             ret = parseHeader(line)
 
             if ret:
                 if type(ret) != type('str'):
-                    print('ret')
                     reqDict = ret
-                    print(reqDict)
                 else:
-                    print(ret)
                     time.sleep(1)  # wait 1 seconds
                     cl.sendall(ret.encode())
-                    # cl.close()
                     line = None
                     flag = 1
                     continue
-
             if (not line) or (line == b'\r\n'):
                 break
         if flag:
@@ -165,12 +157,9 @@ def httpServer():
         cl.send(response)
         cl.close()
 
-
-
         if needReset:
             time.sleep(1)  # wait 1 seconds                
             machine.reset()
-
 
 def http_post(url, req):
     jstr = ''
@@ -184,13 +173,13 @@ def http_post(url, req):
 
     s = socket.socket()
     s.connect(addr)
-    s.send(bytes(req, 'utf8'))
+    s.sendall(req.encode())
     while True:
-		data = s.recv(100)
-		if data:
-			jstr += str(data, 'utf8')
-		else:
-			break
+        data = s.recv(100)
+        if data:
+            jstr += str(data, 'utf8')
+        else:
+            break
     s.close()
 
     jstr = jstr.split('\r\n\r\n')
@@ -198,33 +187,23 @@ def http_post(url, req):
         return ujson.loads(jstr[1])
 def login():
     global status
-    template = """POST /api/xiaosun/getMqttInfo/?gateway_id={gateway_id}&gateway_mac={gateway_mac}HTTP/1.1
-User-Agent: PostmanRuntime/7.28.3
+    result = None
+    template = """POST /api/xiaosun/getMqttInfo/ HTTP/1.1
 Accept: */*
-Postman-Token: c4aed8d3-ba08-4fd2-86f3-d41dbb9f3511
 Host: erp.xiao-sun.cn
 Accept-Encoding: gzip, deflate, br
-Connection: keep-alive
-Cookie: session_id=7e3d6ffc4143178ea40ef16015ab764ac9e02b6f
-Content-Length: 0
+Connection: close
+Content-Type: application/x-www-form-urlencoded
+Content-Length: {length} 
+Cookie: frontend_lang=zh_CN; session_id=767a0763e8312a1dfa9e612c4be6aeae0864faa5
 
-"""
-    req = template.format(gateway_id=status['gateway_id'], gateway_mac=status['gateway_mac'])
-    triple = http_post('http://erp.xiao-sun.cn/api/xiaosun/getMqttInfo/', req)
-    # print(triple['msg'])
-    triple = triple['msg']
-
+{data}"""
+    data = 'gateway_id={}&gateway_mac={}'.format(status['gateway_id'], status['gateway_mac'])
+    triple = http_post('http://erp.xiao-sun.cn/api/xiaosun/getMqttInfo/', template.format(length=len(data), data=data))
     if not triple:
-		return None, None, None
-
-    client_id = triple["mqtt_clientid"]
-    USER = triple["mqtt_user"]
-    PWD = triple["mqtt_pwd"]
-    # 同步服务器时间
-    tm = tuple(triple["server_time"])
-    machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5], 0))
-
-    return client_id, USER, PWD
+        return None
+    
+    return triple['msg']
 
 if __name__ == '__main__':
     try:
@@ -243,28 +222,37 @@ if __name__ == '__main__':
         ap_if.active(False)
         sta_if.active(True)
         sta_if.connect(status['ssid'], status['skey'])
-        time.sleep(10)  # try 10 seconds
+        time.sleep(8)  # try 8 seconds
         sta_if.ifconfig()
 
     if sta_if.isconnected():
         print('Wifi Connection successful.')
         gc.collect()
         gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+        time.sleep(1)
         # uos.dupterm(None, 1) # disable REPL on UART(0)
-        client_id, USER, PWD = login()
-        if client_id:
-            status['mqtt_clientid'] = client_id
-            status['mqtt_user'] = USER
-            status['mqtt_pwd'] = PWD
+        result = login()
+        if not result:
+            print('mqtt mesg none.')
+        else:
+            # 配置or更新mqtt
+            status['mqtt_clientid'] = result["mqtt_clientid"]
+            status['mqtt_user'] = result["mqtt_user"]
+            status['mqtt_pwd'] = result["mqtt_pwd"]
+            # 同步服务器时间
+            tm = tuple(result["server_time"])
+            machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5], 0))
         saveJson()
         mqtt_client(status)
     elif status['gateway_port'] == '80':
         ap_if.active(True)
         sta_if.active(False)
+        ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
         httpServer()
     else:                             # AP Mode
         print('Wifi Connection failed.Set hotspot mode...')
         ap_if.active(True)
         sta_if.active(False)
+        ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
         status['gateway_port'] = '80'
         httpServer()

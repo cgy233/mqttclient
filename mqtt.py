@@ -48,25 +48,29 @@ def mqtt_client(status):
 
     # 连接成功后扫描更新信息
     util.monitorKeyboard(client, evt_topic)
-    util.checkLockEQStatu()
+    # util.checkLockEQStatu()
 
     try:
         ticks = 0
-        time1 = time.time()
+        gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+        time.sleep(15)
+        mesg = util.checkAllDevicesStatus()
+        print("Check All BLE Devices Status.")
+        client.publish(evt_topic, mesg)
         while True:
             # 每隔三十秒发送一次所有设备状态信息
-            time2 = time.time()
-            if int(time2 - time1) >= 30:
-                mesg = util.checkAllDevicesStatus()
-                print("Check All BLE Devices Status.")
-                client.publish(evt_topic, mesg)
-                time1 = time2
+            # time2 = time.time()
+            # if int(time2 - time1) >= 180:
+            #     mesg = util.checkAllDevicesStatus()
+            #     print("Check All BLE Devices Status.")
+            #     client.publish(evt_topic, mesg)
+            #     time1 = time2
             
             time.sleep_ms(500)
             client.check_msg()
             
             if cmd != None:
-                print('selecting...')
                 util.selectFunction(client, evt_topic, cmd)
                 cmd = None
             ticks += 1
@@ -81,4 +85,4 @@ def mqtt_client(status):
     finally:
         print('try - finally - disconnect')
         client.disconnect()
-        machine.reset()
+        # machine.reset()

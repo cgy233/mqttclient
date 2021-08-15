@@ -17,7 +17,6 @@ def readJson(file_name):
 	try:
 		with open(file_name, mode='r', encoding='utf-8') as load_f:
 			dl = ujson.load(load_f)
-			load_f.close()
 			return dl
 	except OSError:
 		return -1
@@ -32,11 +31,9 @@ def updateAllLockInfo(data):
 	all_dev = {}
 	all_dev['Devices'] = devs
 	all_dev['lock_admin_rkey'] = data[0]['lock_admin_rkey']
-	dev_json = ujson.dumps(all_dev)
 	try:
 		with open(ble_json, mode='w', encoding='utf-8') as f:
-			f.write(dev_json)
-			f.close()
+			ujson.dump(all_dev, f)
 			return 1
 	except Exception as e:
 		return -1
@@ -44,43 +41,35 @@ def updateAllLockInfo(data):
 def updateLockInfo(data):
 	del data['lock_status']
 	all_ = readJson(ble_json)
-	dl = all_['Devices']
-	for i in dl:
+	for i in all_['Devices']:
 		if i['lock_mac'] == ''.join(data['lock_mac'].split(':')):
 			i = data
-	all_['Devices'] = dl
-	dev_json = ujson.dumps(all_)
 	try:
 		with open(ble_json, mode='w', encoding='utf-8') as f:
-			f.write(dev_json)
-			f.close()
+			ujson.dump(all_, f)
 			return 1
 	except Exception as e:
 		return -1
 # 处理键盘设备传输的指令
 def responseKeyword(client, topic, mesg):
-	global check_id, check_flag
-	pwd_type = None
-	lock_mac = None
+	global check_flag
 	report = '{{"type": 2, "data": {{"datetime": "{}", "passwd_type": "{}", "lock_mac": "{}"}}, "cmd": "{}"}}'
 	tm = time.localtime()
+	ble_ins = {'000': 'keybr_reset',
+	'200': 'lock_sucessed',
+	'201': 'unlock_sucessed',
+	'203': 'dlock_successed',
+	'197': 'lock_bad',
+	'202': updateLockStatus,
+	'290': matchPasswd,
+	'400': updateLockStatus}
 	if mesg[1:4] == '000':
 		check_flag = 1
-	elif mesg[1:4] == '200':
-		report = report.format(tm, pwd_type, lock_mac, "lock_successed")
-	elif mesg[1:4] == '201':
-		report = report.format(tm, pwd_type, lock_mac, "unlock_successed")
-	elif mesg[1:4] == '202':
-		updateLockStatus(check_id, mesg[5:7], str(int('0x' + mesg[7:11])) + 'mA')
-		check_flag = 1
-	elif mesg[1:4] == '203':
-		report = report.format(tm, pwd_type, lock_mac, "dlock_successed")
-	elif mesg[1:4] == '290':
-		pwd_type, lock_mac = matchPasswd(mesg[5:11])
-		report = report.format(tm, pwd_type, lock_mac, "successed") if pwd_type != None else report.format(tm, pwd_type, lock_mac, "unlock_failed")
-	elif mesg[1:4] == '400':
-		updateLockStatus(check_id, '0', '0mA')
-		check_flag = 1
+	if type(ble_ins[mesg[1:4]]) == type('str'):
+		report = report.format(tm, None, None, ble_ins[mesg[1:4]])
+	else:
+		result = ble_ins[mesg[1:4]](mesg)
+		report = report.format(tm, result[0], result[1], result[2])
 	client.publish(topic, report)
 # 向键盘设备发送指令
 def send(data) :
@@ -106,7 +95,6 @@ def checkLockEQStatu():
 				check_id = i['lock_id']
 				send("#3#271#{}#@".format(check_id))
 				check_flag = 0
-				time.sleep(1)
 				break
 # 初始化SPI
 def monitorKeyboard(client, topic):
@@ -153,22 +141,23 @@ def checkAllDevicesStatus():
 	status['data'] = [ble_dev, gate_dev]
 	return ujson.dumps(status)
 # 更新锁状态
-def updateLockStatus(check_id, lock_statu, lock_eq):
+def updateLockStatus(mesg):
+	global check_id, check_flag
+	lock_statu = mesg[5:7] if mesg[1:4] == '200' else '0'
+	lock_eq = (str(int('0x' + mesg[7:11])) + 'mA') if mesg [1:4] == '200' else '0mA'
 	all_ = readJson(ble_json)
-	dl = all_['Devices']
-	for i in dl:
+	for i in all_['Devices']:
 		if i['lock_id'] == check_id:
 			i['lock_physical_state'] = lock_statu
 			i['lock_EQ'] = lock_eq
-	all_['Devices'] = dl
-	dev_json = ujson.dumps(all_)
 	try:
 		with open(ble_json, mode='w', encoding='utf-8') as f:
-			f.write(dev_json)
-			f.close()
-			return 1
+			ujson.dump(all_, f)
+			time.sleep(1)
+			check_flag = 1
+			return None, None, 'update_successed'
 	except Exception as e:
-		return -1
+		return None, None, 'update_fail'
 # 更新密码
 def changePasswd(data):
 	all_ = readJson(ble_json)
@@ -178,42 +167,35 @@ def changePasswd(data):
 			i['lock_rkey'] = data['lock_rkey']
 			i['lock_ckey'] = data['lock_ckey']
 	all_['Devices'] = dl
-	dev_json = ujson.dumps(all_)
 	try:
 		with open(ble_json, mode='w', encoding='utf-8') as f:
-			f.write(dev_json)
-			f.close()
+			ujson.dumps(all_, f)
 			return 1
 	except Exception as e:
 		return -1
-# 单开锁
-def unlock(data):
-	send('#0#270#{}#@'.format(''.join(data['lock_mac'].split(":"))))
-	return 1
-# 单关锁
-def lock(data):
-	send('#1#270#{}#@'.format(''.join(data['lock_mac'].split(":"))))
-	return 1
-# 开关锁
-def dlock(data):
-	send('#2#270#{}#@'.format(''.join(data['lock_mac'].split(":"))))
+# 锁操作
+def lock_oem(data):
+	# 开锁、关锁、开锁后关锁
+	lock_ins = {'Sunlock': '0', 'Slock': '1', 'Sdlock': '2'}
+	send('#{}#270#{}#@'.format(lock_ins[data['cmd']], ''.join(data['lock_mac'].split(":"))))
 	return 1
 # 密码匹配
-def matchPasswd(request_passwd):
+def matchPasswd(mesg):
 	dl = readJson(ble_json)['Devices']
 	lock_mac = None
 	pwd_type = None
+	result = 'dlock_failed'
 	for i in dl:
-		cor_pwd1 = i['lock_grid_info'] + i['lock_rkey']  
-		cor_pwd2 = i['lock_grid_info'] + i['lock_ckey']  
-		if (cor_pwd1 == request_passwd) or (cor_pwd2 == request_passwd):
-			# print('Passwd OK.')
+		rpwd = i['lock_grid_info'] + i['lock_rkey']  
+		cpwd = i['lock_grid_info'] + i['lock_ckey']  
+		if (rpwd == mesg[5:11]) or (cpwd == mesg[5:11]):
+			result = 'dlock_sucessed'
 			lock_mac = i['lock_mac']
-			pwd_type = "rkey" if  (cor_pwd1 == request_passwd) else "ckey"
+			pwd_type = "rkey" if (rpwd == mesg[5:11]) else "ckey"
 			data = '#2#270#{}#@'.format(i['lock_mac'])
 			send(data)
-			return pwd_type, lock_mac
-	return pwd_type, lock_mac
+			return pwd_type, lock_mac, result
+	return pwd_type, lock_mac, result
 # 根据Odoo后台下发指令进行操作
 def selectFunction(client, topic, data):
 	func_dict = {"SlocksConfig": updateAllLockInfo,
@@ -221,9 +203,9 @@ def selectFunction(client, topic, data):
 	"SqueryLocksStatus": getDevicesInfo,
 	"SqueryLockStatus": getDeviceInfo,
 	"SchangePasswd": changePasswd,
-	"Sunlock": unlock,
-	"Slock": lock,
-	"Sdlock": dlock
+	"Sunlock": lock_oem,
+	"Slock": lock_oem,
+	"Sdlock": lock_oem
 	}
 	mesg = '{{"type": 2, "cmd": "{}"}}'
 	if data['cmd'] not in func_dict.keys():
