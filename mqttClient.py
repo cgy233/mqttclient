@@ -102,7 +102,9 @@ class MQTTClient:
     def ping(self):
         self.sock.write(b"\xc0\0")
 
-    def publish(self, topic, msg, retain=False, qos=0):
+    def publish(self, topic, msg, retain=False, qos=1):
+        print('pulish:')
+        print(msg)
         # print("In release...")
         pkt = bytearray(b"\x30\0\0\0")
         pkt[0] |= qos << 1 | retain
@@ -134,7 +136,7 @@ class MQTTClient:
                     rcv_pid = self.sock.read(2)
                     rcv_pid = rcv_pid[0] << 8 | rcv_pid[1]
                     if pid == rcv_pid:
-                        return
+                        return 
         elif qos == 2:
             assert 0
 
@@ -172,7 +174,7 @@ class MQTTClient:
         if res == b"\xd0":  # PINGRESP
             sz = self.sock.read(1)[0]
             assert sz == 0
-            self.uart0.write('\nPINGRESP\n', 10)
+            # self.uart0.write('\nPINGRESP\n', 10)
             # print('\nPINGRESP\n')
             self.received = True
             return None
@@ -190,7 +192,7 @@ class MQTTClient:
             sz -= 2
         msg = self.sock.read(sz)
         self.cb(self, topic, msg)
-        # self.cb(topic, msg)
+        # self.cb(self, msg)
         if op & 6 == 2:
             pkt = bytearray(b"\x40\x02\0\0")
             struct.pack_into("!H", pkt, 2, pid)

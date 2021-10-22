@@ -1,83 +1,82 @@
 import ujson
 import time
+import machine
 from machine import Pin, SPI
 
-ble_json = 'devices.json'
 gate_json = 'config.json'
 
 check_flag = 1
-check_id = None
+check_over_flag = False
+
+check_id = ''
+check_mac = ''
+
+status = {}
+lock_status_list = [] 
 
 spi = SPI(baudrate=5000, polarity=0, phase=0, sck=Pin(16), mosi=Pin(14), miso=Pin(12),bits=8)
 cs_pin = Pin(13,Pin.OUT)
 r_pin = Pin(5,Pin.IN)
 
-# 读取json文件
-def readJson(file_name):
-	try:
-		with open(file_name, mode='r', encoding='utf-8') as load_f:
-			dl = ujson.load(load_f)
-			return dl
-	except OSError:
-		return -1
-# 配置所有锁的信息
-def updateAllLockInfo(data):
-	devs = []
-	for i in data:
-		del i['lock_status']
-		devs.append(i)
-	if devs == []:
-		return "failed"
-	all_dev = {}
-	all_dev['Devices'] = devs
-	all_dev['lock_admin_rkey'] = data[0]['lock_admin_rkey']
-	try:
-		with open(ble_json, mode='w', encoding='utf-8') as f:
-			ujson.dump(all_dev, f)
-			return 1
-	except Exception as e:
-		return -1
-# 配置指定锁的信息
-def updateLockInfo(data):
-	del data['lock_status']
-	all_ = readJson(ble_json)
-	for i in all_['Devices']:
-		if i['lock_mac'] == ''.join(data['lock_mac'].split(':')):
-			i = data
-	try:
-		with open(ble_json, mode='w', encoding='utf-8') as f:
-			ujson.dump(all_, f)
-			return 1
-	except Exception as e:
-		return -1
-# 处理键盘设备传输的指令
-def responseKeyword(client, topic, mesg):
-	global check_flag
-	report = '{{"type": 2, "data": {{"datetime": "{}", "passwd_type": "{}", "lock_mac": "{}"}}, "cmd": "{}"}}'
-	tm = time.localtime()
-	ble_ins = {'000': 'keybr_reset',
-	'200': 'lock_sucessed',
-	'201': 'unlock_sucessed',
-	'203': 'dlock_successed',
-	'197': 'lock_bad',
-	'202': updateLockStatus,
-	'290': matchPasswd,
-	'400': updateLockStatus}
-	if mesg[1:4] == '000':
+# 上报单个设备的状态
+def reportStatu(mesg):
+	global check_id, status, check_flag, lock_status_list, check_over_flag
+	if check_over_flag:
+		tm = time.localtime()
+		lock_status = {"gateway_id": status['gateway_id'], "lock_list": lock_status_list, "datetime": tm}
+		mesg = '{{"type": 2, "cmd": "reportStatusCompleted", "data": "{}"}}'
 		check_flag = 1
-	if type(ble_ins[mesg[1:4]]) == type('str'):
-		report = report.format(tm, None, None, ble_ins[mesg[1:4]])
+		check_over_flag = False
+		lock_status_list = []
+		return mesg.format(lock_status)
+		
+	if mesg[1:4] == '401':
+		lock_statu = 'IdError'
+		lock_eq = '999mA'
 	else:
-		result = ble_ins[mesg[1:4]](mesg)
-		report = report.format(tm, result[0], result[1], result[2])
-	client.publish(topic, report)
-# 向键盘设备发送指令
+		lock_statu = mesg[5:7] if mesg[1:4] == '202' else '0'
+		lock_eq = (str(int('0x' + mesg[7:11])) + 'mA') if mesg [1:4] == '202' else '0mA'
+	lock_status_list.append({'lock_id': check_id, 'lock_statu': lock_statu, 'lock_eq': lock_eq})
+	check_flag = 1
+	# 上报单个锁的状态信息
+	# data = {"lock_id": check_id, "lock_statu": lock_statu, "lock_eq": lock_eq, "ins": "reportStatu", "gateway_id": status['gateway_id']}
+	# report = '{{"type": 2, "cmd": "{}", "data": "{}"}}'
+	# report = report.format("reportStatus", data)
+	# return report
+	return 1
+# 上报密码
+def reportPasswd(mesg):
+	global status
+	tm = time.localtime()
+	passwd = mesg[5: 11]
+	report = '{{"type": 3, "cmd": "{}", "data": "{}"}}'
+	data = {"datetime": tm, "password": passwd, "gateway_id": status['gateway_id']}
+	return report.format("CuserStorage", data)
+# 发送重启命令
+def restart(data):
+	global status
+	tm = time.localtime()
+	send('#3#000#@')
+	data = {"datetime": tm, "gateway_id": status['gateway_id'], 'gateway_power': status['gateway_power']}
+	mesg = '{{"type": 2, "cmd": "DevRestartSucess", "data": "{}"}}'
+	return mesg.format(data)
+# 更新网关自身电量
+def updateGatePower(mesg):
+	global status
+	tm = time.localtime()
+	with open("config.json","w") as dump_f:
+		ujson.dump(status, dump_f)
+	status['gateway_power'] = mesg.split('#')[2]
+	data = {"datetime": tm, "gateway_id": status['gateway_id'], 'gateway_power': status['gateway_power']}
+	msg = '{{"type": 3, "cmd": "updateGatewayPower", "data": "{}"}}'.format(data)
+	return msg
+# 向51发送指令
 def send(data) :
 	print(data)
 	cs_pin.value(0)
 	spi.write(bytearray(data.encode("utf-8")))
 	cs_pin.value(1)
-# 读取键盘设备传输的指令
+# 读取51指令
 def read(client, topic):
 	cs_pin.value(0)
 	buf = bytearray(26)
@@ -86,138 +85,105 @@ def read(client, topic):
 	print(str(buf, 'utf8'))
 	if buf[0] == 35:
 		responseKeyword(client, topic, str(buf,'utf8'))
-# 向锁发送指令 扫描指定锁状态 电量
-def checkLockEQStatu():
-	global check_flag, check_id
-	for i in readJson(ble_json)['Devices']:
+# 向51发送指令, 扫描列表锁状态的状态
+def checkLockEQStatus(data):
+	if data['data']['lock_list'] == []:
+		return -1
+	global check_flag, check_id, check_over_flag
+	for lock_id in data['data']['lock_list']:
 		while True:
 			if check_flag:
-				check_id = i['lock_id']
+				check_id = lock_id
 				send("#3#271#{}#@".format(check_id))
 				check_flag = 0
 				break
+	check_over_flag = True
+	return 1
 # 初始化SPI
 def monitorKeyboard(client, topic):
+	global status
 	def funv(v):
 		read(client, topic)
 	cs_pin.value(1)
 	r_pin.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING , handler=funv)
-# 返回所有的蓝牙设备信息
-def getDevicesInfo(data):
-	all_dev_info = {'type': 2, 'cmd': 'successed'}
-	all_dev_info["data"] = readJson(ble_json)['Devices']
-	if all_dev_info == {}:
-		return -1
-	return ujson.dumps(all_dev_info)
-# 返回指定蓝牙设备信息
-def getDeviceInfo(data):
-	mac = data['lock_mac']
-	dev_info = {'type': 2, 'cmd': 'successed'}
-	all_dev_info = readJson(ble_json)['Devices']
-	for i in all_dev_info:
-		if i['lock_mac'] == ''.join(mac.split(':')):
-			dev_info['data'] = i
-	if dev_info == {}:
-		return -1
-	return ujson.dumps(dev_info)
-# 检查所有设备状态
-def checkAllDevicesStatus():
-	status = {'type': 3, 'cmd': 'CheartBeat'}
-	dl = readJson(ble_json)['Devices']
-	devs = []
-	for i in dl:
-		del i['lock_mac']
-		del i['lock_grid_info']
-		del i['lock_rkey']
-		del i['lock_ckey']
-		devs.append(i)
-	dev = {}
-	gate_all_info = readJson(gate_json)
-	dev['gateway_id'] = gate_all_info['gateway_id']
-	dev['gateway_power'] =  gate_all_info['gateway_power']
-	ble_dev = {'lock': devs}
-	gate_dev = {'gateway': dev}
-	
-	status['data'] = [ble_dev, gate_dev]
-	return ujson.dumps(status)
-# 更新锁状态
-def updateLockStatus(mesg):
-	global check_id, check_flag
-	lock_statu = mesg[5:7] if mesg[1:4] == '200' else '0'
-	lock_eq = (str(int('0x' + mesg[7:11])) + 'mA') if mesg [1:4] == '200' else '0mA'
-	all_ = readJson(ble_json)
-	for i in all_['Devices']:
-		if i['lock_id'] == check_id:
-			i['lock_physical_state'] = lock_statu
-			i['lock_EQ'] = lock_eq
-	try:
-		with open(ble_json, mode='w', encoding='utf-8') as f:
-			ujson.dump(all_, f)
-			time.sleep(1)
-			check_flag = 1
-			return None, None, 'update_successed'
-	except Exception as e:
-		return None, None, 'update_fail'
-# 更新密码
-def changePasswd(data):
-	all_ = readJson(ble_json)
-	dl = all_['Devices']
-	for i in dl:
-		if i['lock_mac'] == ''.join(data['lock_mac'].split(':')):
-			i['lock_rkey'] = data['lock_rkey']
-			i['lock_ckey'] = data['lock_ckey']
-	all_['Devices'] = dl
-	try:
-		with open(ble_json, mode='w', encoding='utf-8') as f:
-			ujson.dumps(all_, f)
-			return 1
-	except Exception as e:
-		return -1
-# 锁操作
+	with open("config.json",'r') as load_f:
+		status = ujson.load(load_f)
+# 锁操作, 开关
 def lock_oem(data):
+	global check_mac
 	# 开锁、关锁、开锁后关锁
 	lock_ins = {'Sunlock': '0', 'Slock': '1', 'Sdlock': '2'}
-	send('#{}#270#{}#@'.format(lock_ins[data['cmd']], ''.join(data['lock_mac'].split(":"))))
+	check_mac = data['data']['lock_mac']
+	if check_mac == '':
+		print('Cannot find lock.')
+		return -1
+	send('#{}#270#{}#@'.format(lock_ins[data['cmd']], ''.join(data['data']['lock_mac'].split(":"))))
 	return 1
-# 密码匹配
-def matchPasswd(mesg):
-	dl = readJson(ble_json)['Devices']
-	lock_mac = None
-	pwd_type = None
-	result = 'dlock_failed'
-	for i in dl:
-		rpwd = i['lock_grid_info'] + i['lock_rkey']  
-		cpwd = i['lock_grid_info'] + i['lock_ckey']  
-		if (rpwd == mesg[5:11]) or (cpwd == mesg[5:11]):
-			result = 'dlock_sucessed'
-			lock_mac = i['lock_mac']
-			pwd_type = "rkey" if (rpwd == mesg[5:11]) else "ckey"
-			data = '#2#270#{}#@'.format(i['lock_mac'])
-			send(data)
-			return pwd_type, lock_mac, result
-	return pwd_type, lock_mac, result
+# 密码错误 通知51
+def passwdErr(data):
+	# 指令冲突 待更改成250
+	send('#3#249#@')
+	return 1
+# 更新时间
+def updateTime(data):
+	tm = tuple(data["data"]["server_time"])
+	machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3] + 8, tm[4], tm[5], 0))
+	return 1
+# 处理键盘设备传输的指令
+def responseKeyword(client, topic, mesg):
+	global check_flag, status, check_mac
+	report = ''
+	tm = time.localtime()
+	ble_ins = {'000': 'keybr_reset',
+	'001': updateGatePower,
+	'197': 'lock_bad',
+	'200': 'lock_sucessed',
+	'201': 'unlock_sucessed',
+	'202': reportStatu,
+	'203': 'dlock_successed',
+	'290': reportPasswd,
+	'400': reportStatu,
+	'401': reportStatu
+	}
+	if mesg[1:4] == '000':
+		check_flag = 1
+	if type(ble_ins[mesg[1:4]]) == type('str'):
+		report = '{{"type": 2, "cmd": "{}", "data": "{}"}}'
+		data = {"datetime": tm, "lock_mac": check_mac, "gateway_id": status['gateway_id']}
+		report = report.format(ble_ins[mesg[1:4]], data)
+	else:
+		report = ble_ins[mesg[1:4]](mesg)
+		if  report == 1:
+			return 
+	client.publish(topic, report)
 # 根据Odoo后台下发指令进行操作
 def selectFunction(client, topic, data):
-	func_dict = {"SlocksConfig": updateAllLockInfo,
-	"SlockConfig": updateLockInfo,
-	"SqueryLocksStatus": getDevicesInfo,
-	"SqueryLockStatus": getDeviceInfo,
-	"SchangePasswd": changePasswd,
+	func_dict = {
 	"Sunlock": lock_oem,
 	"Slock": lock_oem,
-	"Sdlock": lock_oem
+	"Sdlock": lock_oem,
+	'SpasswdErr': passwdErr,
+	'ScheckStatus': checkLockEQStatus,
+	'SupdateTime': updateTime,
+	'Srestart': restart,
+	'over': 'over'
 	}
-	mesg = '{{"type": 2, "cmd": "{}"}}'
+	mesg = '{{"type": 2, "cmd": "{}", "data": {{"gateway_id": {}}}}}'
+	if type(func_dict[data['cmd']]) == type('str'):
+		mesg = mesg.format("over", status['gateway_id'])
+		# 结束通知
+		# client.publish(topic, mesg)
+		return 
 	if data['cmd'] not in func_dict.keys():
-		mesg = mesg.format("cmdNotFound")
+		mesg = mesg.format("cmdNotFind", status['gateway_id'])
 		client.publish(topic, mesg)
 		return 
-	result = func_dict.get(data["cmd"])(data['data'])
+	result = func_dict.get(data["cmd"])(data)
 	if result == 1:
-		mesg = mesg.format("success")
+		mesg = mesg.format("success", status['gateway_id'])
 	elif result == -1:
-		mesg = mesg.format("failed")
+		mesg = mesg.format("failed", status['gateway_id'])
 	else:
 		mesg = result
-	time.sleep_ms(50)
-	client.publish(topic, mesg)
+		client.publish(topic, mesg)
+		return
