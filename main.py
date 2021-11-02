@@ -148,7 +148,7 @@ def httpServer():
             data = "{}('{}')" .format(cb, ujson.dumps(status))
             cb = None
         else:
-            data = '<p>{}<p>'.format(status['gateway_mac'])
+            data = '<p>{}<p>'.format(status['gateway_name'])
             print(data)
 
         response = template.format(length=len(data), json=data)
@@ -199,10 +199,6 @@ Content-Length: {length}
 Cookie: frontend_lang=zh_CN; session_id=767a0763e8312a1dfa9e612c4be6aeae0864faa5
 
 {data}"""
-    # zhh 本地测试
-    # data = 'gateway_power={}&gateway_mac={}'.format(status['gateway_power'], status['gateway_mac'])
-    # triple = http_post('http://192.168.2.19:8014/api/xiaosun/getMqttInfo/', template.format(length=len(data), data=data))
-    # 公网
     data = 'gateway_id={}&gateway_mac={}'.format(status['gateway_id'], status['gateway_mac'])
     triple = http_post('http://erp.xiao-sun.cn/api/xiaosun/getMqttInfo/', template.format(length=len(data), data=data))
     if not triple:
@@ -246,7 +242,14 @@ if __name__ == '__main__':
         time.sleep(1)
         # uos.dupterm(None, 1) # disable REPL on UART(0)
         if status['mqtt_pwd'] != '':
-	        mqtt_client(status)
+            try:
+                mqtt_client()
+            except Exception as e:
+                status['mqtt_pwd'] = ''
+                with open("config.json","w") as dump_f:
+                    ujson.dump(status, dump_f)
+                    dump_f.close()
+                machine.reset()
         result = login()
         if result == None:
             print('mqtt mesg none.')
@@ -258,34 +261,18 @@ if __name__ == '__main__':
             status['gateway_id'] = result["gateway_id"]
             # 同步服务器时间
             tm = tuple(result["server_time"])
+            del result
             machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3] + 8, tm[4], tm[5], 0))
         saveJson()
         # 容错：网络波动或者mqtt会话结束
         try:
-            mqtt_client(status)
+            mqtt_client()
         except Exception as e:
-            pass
-            # machine.reset()
-            # if sta_if.isconnected():
-            #     mqtt_client(status)
-            # else:
-            #     t1 = time.time()
-            #     sta_if.connect(status['ssid'], status['skey'])
-            #     while True:
-            #         t2 = time.time()
-            #         if sta_if.isconnected():
-            #             mqtt_client(status)
-            #         if t2 - t1 >= 8:
-            #             break
-            #         sta_if.connect(status['ssid'], status['skey'])
-            #         time.sleep_ms(20)
-            #         t2 = t1
-            #     print('Wifi Connection failed.Set hotspot mode...')
-            #     ap_if.active(True)
-            #     sta_if.active(False)
-            #     ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
-            #     status['gateway_port'] = '80'
-            #     httpServer()
+            status['mqtt_pwd'] = ''
+            with open("config.json","w") as dump_f:
+                ujson.dump(status, dump_f)
+                dump_f.close()
+            machine.reset()
     elif status['gateway_port'] == '80':
         ap_if.active(True)
         sta_if.active(False)

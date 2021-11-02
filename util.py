@@ -27,7 +27,7 @@ def reportStatu(mesg):
 		mesg = '{{"type": 2, "cmd": "reportStatusCompleted", "data": "{}"}}'
 		check_flag = 1
 		check_over_flag = False
-		lock_status_list = []
+		del lock_status_list
 		return mesg.format(lock_status)
 		
 	if mesg[1:4] == '401':
@@ -38,11 +38,6 @@ def reportStatu(mesg):
 		lock_eq = (str(int('0x' + mesg[7:11])) + 'mA') if mesg [1:4] == '202' else '0mA'
 	lock_status_list.append({'lock_id': check_id, 'lock_statu': lock_statu, 'lock_eq': lock_eq})
 	check_flag = 1
-	# 上报单个锁的状态信息
-	# data = {"lock_id": check_id, "lock_statu": lock_statu, "lock_eq": lock_eq, "ins": "reportStatu", "gateway_id": status['gateway_id']}
-	# report = '{{"type": 2, "cmd": "{}", "data": "{}"}}'
-	# report = report.format("reportStatus", data)
-	# return report
 	return 1
 # 上报密码
 def reportPasswd(mesg):
@@ -70,9 +65,10 @@ def updateGatePower(mesg):
 	data = {"datetime": tm, "gateway_id": status['gateway_id'], 'gateway_power': status['gateway_power']}
 	msg = '{{"type": 3, "cmd": "updateGatewayPower", "data": "{}"}}'.format(data)
 	return msg
+	# return 1
 # 向51发送指令
 def send(data) :
-	print(data)
+	# print(data)
 	cs_pin.value(0)
 	spi.write(bytearray(data.encode("utf-8")))
 	cs_pin.value(1)
@@ -82,7 +78,7 @@ def read(client, topic):
 	buf = bytearray(26)
 	spi.readinto(buf) 
 	cs_pin.value(1)
-	print(str(buf, 'utf8'))
+	# print(str(buf, 'utf8'))
 	if buf[0] == 35:
 		responseKeyword(client, topic, str(buf,'utf8'))
 # 向51发送指令, 扫描列表锁状态的状态
@@ -97,6 +93,7 @@ def checkLockEQStatus(data):
 				send("#3#271#{}#@".format(check_id))
 				check_flag = 0
 				break
+	del data
 	check_over_flag = True
 	return 1
 # 初始化SPI
@@ -115,7 +112,6 @@ def lock_oem(data):
 	lock_ins = {'Sunlock': '0', 'Slock': '1', 'Sdlock': '2'}
 	check_mac = data['data']['lock_mac']
 	if check_mac == '':
-		print('Cannot find lock.')
 		return -1
 	send('#{}#270#{}#@'.format(lock_ins[data['cmd']], ''.join(data['data']['lock_mac'].split(":"))))
 	return 1
@@ -170,7 +166,7 @@ def selectFunction(client, topic, data):
 	}
 	mesg = '{{"type": 2, "cmd": "{}", "data": {{"gateway_id": {}}}}}'
 	if type(func_dict[data['cmd']]) == type('str'):
-		mesg = mesg.format("over", status['gateway_id'])
+		# mesg = mesg.format("over", status['gateway_id'])
 		# 结束通知
 		# client.publish(topic, mesg)
 		return 
@@ -180,9 +176,11 @@ def selectFunction(client, topic, data):
 		return 
 	result = func_dict.get(data["cmd"])(data)
 	if result == 1:
-		mesg = mesg.format("success", status['gateway_id'])
+		return 
+		# mesg = mesg.format("success", status['gateway_id'])
 	elif result == -1:
-		mesg = mesg.format("failed", status['gateway_id'])
+		return 
+		# mesg = mesg.format("failed", status['gateway_id'])
 	else:
 		mesg = result
 		client.publish(topic, mesg)
