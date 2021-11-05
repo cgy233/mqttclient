@@ -5,8 +5,12 @@ import machine
 import time
 import ubinascii
 import socket
+from util import Util
 from ure import compile
-from mqtt import mqtt_client
+from mqttClient import MQTTClient
+
+cmd = None
+evt_topic = None
 
 status = {
     "gateway_id": "",
@@ -16,11 +20,9 @@ status = {
     "gateway_mac": "",
     "gateway_port": "80",
     "gateway_version": "1",
-    "gateway_power": "",
     "mqtt_clientid": "",
     "mqtt_user": "",
     "mqtt_pwd": "",
-    "mqtt_skey": ""
 }
 
 def createJson():
@@ -48,7 +50,84 @@ def saveJson():
     with open("config.json","w") as dump_f:
         ujson.dump(status, dump_f)
         dump_f.close()
-    time.sleep(1)  # wait 1 seconds
+def mqtt_callback(client, topic, message):
+    global cmd
+
+    # uart0 = machine.UART(0, 115200)
+    # uart0.write(message, len(message))
+
+    cmd = eval(str(message, 'utf8'))
+    # 只处理属于本网关id的消息
+    if status['gateway_id'] == cmd['data']['gateway_id']:
+        if cmd['cmd'] == 'ScheckStatus':
+            return 
+        else:
+            util.selectFunction(client, evt_topic, cmd)
+            cmd = None
+            return
+    else:
+        cmd = None
+        return
+        
+def mqtt_client():
+    global cmd, evt_topic
+
+    # 如果配置文件打开失败，删除配置文件重启
+    try:
+        with open('config.json') as load_f:
+            status = ujson.load(load_f)
+    except Exception as e:
+        import os
+        os.remove('config.json')
+        machine.reset()
+    topic = 'MNZ2V9ORYG/{}/'.format(status['gateway_name'])
+    sub_topic = (topic + 'control').encode('ascii')
+    evt_topic = (topic + 'event').encode('ascii')
+
+    # 容错：网络波动或者mqtt会话结束
+    try:
+        client = MQTTClient(status['mqtt_clientid'], 'iotcloud-mqtt.gz.tencentdevices.com', 1883, status['mqtt_user'], status['mqtt_pwd'], 60)
+        client.set_callback(mqtt_callback)
+        client.connect()
+        client.subscribe(sub_topic, 1)
+        print('MQTT succeed.')
+        
+        # 设置51键盘操作SPI中断
+        util.monitorKeyboard(client, evt_topic)
+
+        # 设备上线 通知odoo后台
+        mesg = '{{"type": 3, "cmd": "devOnline", "data": {{"gateway_id": "{}"}}}}'.format(status['gateway_id'])
+        client.publish(evt_topic, mesg)
+
+        ticks = 0
+        gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+        util.send('#3#001#@')
+        while True:
+            if cmd != None:
+                util.selectFunction(client, evt_topic, cmd)
+                cmd = None
+            time.sleep_ms(200)
+            client.check_msg()
+            
+            ticks += 1
+
+            if ticks >= (60 / 2):
+                client.ping()
+                gc.collect()
+                gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+                ticks = 0
+    except Exception as e:
+        # MQTT 连接失败，重新向Odoo后台请求MQTT的相关参数, 重启
+        try:
+            with open("config.json","rw") as dump_f:
+                status = ujson.load(dump_f)
+                status['mqtt_pwd'] = ''
+                ujson.dump(status, dump_f)
+                dump_f.close()
+        except Exception as e:
+            machine.reset()
+        util.send('#3#000#@')
 
 def parseHeader(headerLine, ):
     kwDict = {}
@@ -61,11 +140,9 @@ Content-Type: text/html
         reg_content += f.read()
         f.close()
 
-    # print(headerLine)
     time.sleep(1)  # wait 1 seconds 
     bytesline = headerLine
     headerLine = headerLine.decode('ascii')
-    # print(headerLine)
 
     if headerLine.find('GET /index') >= 0:
         return reg_content
@@ -77,90 +154,86 @@ Content-Type: text/html
 
         bytesline = _percent_pat.sub(hex_to_byte, bytesline)
         headerLine = bytesline.decode('ascii')
-
-        # print('1', headerLine)
         headerLine = headerLine.split('?')[1]
         headerLine = headerLine.split(' ')[0]
-        # print('2', headerLine)
         lists = headerLine.split('&')
+
         for kw in lists:
             kwlist = kw.split('=')
             kwDict[kwlist[0]] =  kwlist[1]
-            # print('3', kwlist[1])
-
         return kwDict
-
-def httpServer():
-    global status
-    bodyLen = None
-    
+# 热点模式 设置WIFI名称密码
+def httpServer(util):
+    # 通知51 亮红灯
+    util.send('#3#002#@')
     template = """HTTP/1.1 200 OK Content-Length: {length}
 
 {json}"""
     reqDict = {}
     cb = None
     needReset = False
+
     addr = socket.getaddrinfo('0.0.0.0', int(status['gateway_port']))[0][-1]
-
-
     s = socket.socket()
     s.bind(addr)
     s.listen(1)
 
     print('listening on', addr)
 
-
-    while True:
-        flag = 0
-        cl, addr = s.accept()
-        cl_file=cl.makefile('rwb',0)
-
+    try:
         while True:
-            line = cl_file.readline()
-            ret = parseHeader(line)
+            flag = 0
+            cl, addr = s.accept()
+            cl_file=cl.makefile('rwb',0)
 
-            if ret:
-                if type(ret) != type('str'):
-                    reqDict = ret
-                else:
-                    time.sleep(1)  # wait 1 seconds
-                    cl.sendall(ret.encode())
-                    line = None
-                    flag = 1
-                    continue
-            if (not line) or (line == b'\r\n'):
-                break
-        if flag:
-            continue
-        if 'callbacks' in reqDict.keys():
-            cb = reqDict['callbacks']
-        
-        for key in status:
-            if key in reqDict.keys():
-                status[key] = reqDict[key]
-                needReset = True
-                print('5', key)
+            while True:
+                line = cl_file.readline()
+                ret = parseHeader(line)
 
-        saveJson()
-        reqDict = {}
+                if ret:
+                    if type(ret) != type('str'):
+                        reqDict = ret
+                    else:
+                        time.sleep(1)  # wait 1 seconds
+                        cl.sendall(ret.encode())
+                        line = None
+                        flag = 1
+                        continue
+                if (not line) or (line == b'\r\n'):
+                    break
+            if flag:
+                continue
+            if 'callbacks' in reqDict.keys():
+                cb = reqDict['callbacks']
+            
+            for key in status:
+                if key in reqDict.keys():
+                    status[key] = reqDict[key]
+                    needReset = True
+                    print('5', key)
 
-        if cb:
-            data = "{}('{}')" .format(cb, ujson.dumps(status))
-            cb = None
-        else:
-            data = '<p>{}<p>'.format(status['gateway_name'])
-            print(data)
+            saveJson()
+            reqDict = {}
 
-        response = template.format(length=len(data), json=data)
+            if cb:
+                data = "{}('{}')" .format(cb, ujson.dumps(status))
+                cb = None
+            else:
+                data = '<p>{}<p>'.format(status['gateway_name'])
+                print(data)
+
+            response = template.format(length=len(data), json=data)
 
 
-        time.sleep(1)  # wait 1 seconds
-        cl.send(response)
-        cl.close()
+            time.sleep(1)  # wait 1 seconds
+            cl.send(response)
+            cl.close()
 
-        if needReset:
-            time.sleep(1)  # wait 1 seconds                
-            machine.reset()
+            if needReset:
+                time.sleep(1)  # wait 1 seconds                
+                machine.reset()
+    except Exception as e:
+        machine.reset()
 
 def http_post(url, req):
     jstr = ''
@@ -187,8 +260,6 @@ def http_post(url, req):
     if len(jstr) == 2:
         return ujson.loads(jstr[1])
 def login():
-    global status
-    result = None
     template = """POST /api/xiaosun/getMqttInfo/ HTTP/1.1
 Accept: */*
 Host: erp.xiao-sun.cn
@@ -207,15 +278,14 @@ Cookie: frontend_lang=zh_CN; session_id=767a0763e8312a1dfa9e612c4be6aeae0864faa5
     return triple['msg']
 
 if __name__ == '__main__':
+    ap_if = network.WLAN(network.AP_IF)
+    sta_if = network.WLAN(network.STA_IF)
     try:
         with open("config.json",'r') as load_f:
             status = ujson.load(load_f)
         load_f.close()
     except OSError:
         createJson()
-
-    ap_if = network.WLAN(network.AP_IF)
-    sta_if = network.WLAN(network.STA_IF)
     if status['ssid'] == '' or status['skey'] == '':      # AP Mode
         ap_if.active(True)
         sta_if.active(False)
@@ -233,55 +303,33 @@ if __name__ == '__main__':
                 break
             time.sleep_ms(20)
             t2 = t1
-        
+    util = Util(status['gateway_id'])
 
     if sta_if.isconnected():
-        print('Wifi Connection successful.')
         gc.collect()
         gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         time.sleep(1)
-        # uos.dupterm(None, 1) # disable REPL on UART(0)
         if status['mqtt_pwd'] != '':
-            try:
-                mqtt_client()
-            except Exception as e:
-                status['mqtt_pwd'] = ''
-                with open("config.json","w") as dump_f:
-                    ujson.dump(status, dump_f)
-                    dump_f.close()
-                machine.reset()
-        result = login()
-        if result == None:
-            print('mqtt mesg none.')
-        else:
-            # 配置or更新mqtt用户名、密码
-            status['mqtt_clientid'] = result["mqtt_clientid"]
-            status['mqtt_user'] = result["mqtt_user"]
-            status['mqtt_pwd'] = result["mqtt_pwd"]
-            status['gateway_id'] = result["gateway_id"]
-            # 同步服务器时间
-            tm = tuple(result["server_time"])
-            del result
-            machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3] + 8, tm[4], tm[5], 0))
-        saveJson()
-        # 容错：网络波动或者mqtt会话结束
-        try:
             mqtt_client()
-        except Exception as e:
-            status['mqtt_pwd'] = ''
-            with open("config.json","w") as dump_f:
-                ujson.dump(status, dump_f)
-                dump_f.close()
-            machine.reset()
+        # 配置or更新mqtt用户名、密码
+        result = login()
+        status['mqtt_clientid'] = result["mqtt_clientid"]
+        status['mqtt_user'] = result["mqtt_user"]
+        status['mqtt_pwd'] = result["mqtt_pwd"]
+        status['gateway_id'] = result["gateway_id"]
+        # 同步服务器时间
+        tm = tuple(result["server_time"])
+        machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3] + 8, tm[4], tm[5], 0))
+        saveJson()
+        mqtt_client()
     elif status['gateway_port'] == '80':
         ap_if.active(True)
         sta_if.active(False)
         ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
-        httpServer()
+        httpServer(util)
     else:                             # AP Mode
-        print('Wifi Connection failed.Set hotspot mode...')
         ap_if.active(True)
         sta_if.active(False)
         ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
         status['gateway_port'] = '80'
-        httpServer()
+        httpServer(util)
