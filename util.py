@@ -1,12 +1,12 @@
 import ujson
+import gc
 import time
 import machine
 from machine import Pin, SPI
 
-# 初始化SPI
 class Util():
-	def __init__(self, gateway_id):
-	    self.gateway_id = gateway_id
+	def __init__(self):
+	    self.gateway_id = ''
 	    self.check_id = ''
 	    self.check_mac = ''
 	    self.check_flag = 1
@@ -23,7 +23,9 @@ class Util():
 			tm = time.localtime()
 			self.check_flag = 1
 			self.check_over_flag = False
-			return '{{"type": 2, "cmd": "reportStatusCompleted", "data": "{}"}}' \
+			# 自动化测试 51按键
+			self.send('#3#003#@')
+			return '{{"cmd": "RSC", "data": "{}"}}' \
 				.format({"gateway_id": self.gateway_id, "lock_list": self.lock_status_list, "datetime": tm})
 		if mesg[1:4] == '401':
 			lock_statu = 'IdError'
@@ -31,34 +33,40 @@ class Util():
 		else:
 			lock_statu = mesg[5:7] if mesg[1:4] == '202' else '0'
 			lock_eq = (str(int('0x' + mesg[7:11])) + 'mA') if mesg [1:4] == '202' else '0mA'
-		self.lock_status_list.append({'lock_id': self.check_id, 'lock_statu': lock_statu, 'lock_eq': lock_eq})
+			# l_i 锁id l_s 锁的物理状态
+		self.lock_status_list.append({'l_i': self.check_id, 'l_s': lock_statu, 'l_e': lock_eq})
 		self.check_flag = 1
 		return 1
 	# 上报密码
 	def reportPasswd(self, mesg):
 		tm = time.localtime()
 		passwd = mesg[5: 11]
-		report = '{{"type": 3, "cmd": "{}", "data": "{}"}}'
+		report = '{{"cmd": "{}", "data": "{}"}}'
 		data = {"datetime": tm, "password": passwd, "gateway_id": self.gateway_id}
 		return report.format("CuserStorage", data)
 	# 发送重启命令
 	def restart(self, data):
 		tm = time.localtime()
-		self.send('#3#000#@')
+		self.send('#3#004#@')
 		data = {"datetime": tm, "gateway_id": self.gateway_id}
-		mesg = '{{"type": 2, "cmd": "DevRestartSucess", "data": "{}"}}'
+		mesg = '{{"cmd": "DRS", "data": "{}"}}'
 		return mesg.format(data)
+	# 51重启ESP8266没有重启
+	def normal_mode(self, data):
+		if not self.check_over_flag:
+			self.send('#3#003#@')
+		return
 	# 更新网关自身电量
 	def updateGatePower(self, mesg):
 		tm = time.localtime()
 		power = mesg.split('#')[2]
-		return '{{"type": 3, "cmd": "updateGatewayPower", "data": "{}"}}' \
+		return '{{"cmd": "UGP", "data": "{}"}}' \
 			.format({"datetime": tm, "gateway_id": self.gateway_id, 'gateway_power': power})
 
 		# return 1
 	# 向51发送指令
 	def send(self, data) :
-		# print(data)
+		print(data)
 		self.cs_pin.value(0)
 		self.spi.write(bytearray(data.encode("utf-8")))
 		self.cs_pin.value(1)
@@ -69,10 +77,11 @@ class Util():
 		self.spi.readinto(buf) 
 		self.cs_pin.value(1)
 		if buf[0] == 35:
-			# print(str(buf, 'utf8'))
+			print(str(buf, 'utf8'))
 			self.responseKeyword(client, topic, str(buf,'utf8'))
 	# 向51发送指令, 扫描列表锁状态的状态
 	def checkLockEQStatus(self, data):
+		gc.collect()
 		if data['data']['lock_list'] == []:
 			return -1
 		for lock_id in data['data']['lock_list']:
@@ -85,7 +94,8 @@ class Util():
 		self.check_over_flag = True
 		return 1
 	# 初始化SPI
-	def monitorKeyboard(self, client, topic):
+	def monitorKeyboard(self, client, topic, gateway_id):
+		self.gateway_id = gateway_id
 		def funv(v):
 			self.read(client, topic)
 		self.cs_pin.value(1)
@@ -115,6 +125,7 @@ class Util():
 		tm = time.localtime()
 		ble_ins = {'000': 'keybr_reset',
 		'001': self.updateGatePower,
+		'003': self.normal_mode,
 		'197': 'lock_bad',
 		'200': 'lock_sucessed',
 		'201': 'unlock_sucessed',
@@ -124,17 +135,21 @@ class Util():
 		'400': self.reportStatu,
 		'401': self.reportStatu
 		}
+		if mesg[1:4] == '003':
+			ble_ins[mesg[1:4]](mesg)
+			return
 		if mesg[1:4] == '000':
 			self.check_flag = 1
 			return
 		if type(ble_ins[mesg[1:4]]) == type('str'):
-			report = '{{"type": 2, "cmd": "{}", "data": "{}"}}' \
+			report = '{{"cmd": "{}", "data": "{}"}}' \
 				.format(ble_ins[mesg[1:4]], {"datetime": tm, "lock_mac": self.check_mac, "gateway_id": self.gateway_id})
 		else:
 			report = ble_ins[mesg[1:4]](mesg)
-			if  report == 1:
+			if report == 1:
 				return 
 		client.publish(topic, report)
+		self.lock_status_list = []
 	# 根据Odoo后台下发指令进行操作
 	def selectFunction(self, client, topic, data):
 		func_dict = {
@@ -147,14 +162,14 @@ class Util():
 		'Srestart': self.restart,
 		'over': 'over'
 		}
-		mesg = '{{"type": 2, "cmd": "{}", "data": {{"gateway_id": {}}}}}'
-		if type(func_dict[data['cmd']]) == type('str'):
-			# mesg = mesg.format("over", status['gateway_id'])
-			# client.publish(topic, mesg)
-			return 
+		mesg = '{{"cmd": "{}", "data": {{"gateway_id": {}}}}}'
 		# 指令字典里面找不到命令
 		if data['cmd'] not in func_dict.keys():
 			# mesg = mesg.format("cmdNotFind", self.gateway_id)
+			# client.publish(topic, mesg)
+			return 
+		if type(func_dict[data['cmd']]) == type('str'):
+			# mesg = mesg.format("over", status['gateway_id'])
 			# client.publish(topic, mesg)
 			return 
 		result = func_dict.get(data["cmd"])(data)

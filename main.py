@@ -1,3 +1,4 @@
+from os import stat
 import ujson
 import gc
 import network
@@ -8,9 +9,9 @@ import socket
 from util import Util
 from ure import compile
 from mqttClient import MQTTClient
+gc.collect()
 
 cmd = None
-evt_topic = None
 
 status = {
     "gateway_id": "",
@@ -25,6 +26,9 @@ status = {
     "mqtt_pwd": "",
 }
 
+# 工具类，初始化SPI，提供各种功能接口
+util = Util()
+
 def createJson():
     global status
     
@@ -34,10 +38,7 @@ def createJson():
     status['gateway_mac'] = ubinascii.hexlify(ap.config('mac')).decode('ascii')
     status['gateway_port'] = '80'
 
-    with open("config.json","w") as dump_f:
-        ujson.dump(status, dump_f)
-    dump_f.close()
-    time.sleep(1)  # wait 1 seconds
+    saveJson()
 
     ap.active(True)
     ap.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
@@ -49,60 +50,57 @@ def saveJson():
     global status
     with open("config.json","w") as dump_f:
         ujson.dump(status, dump_f)
-        dump_f.close()
 def mqtt_callback(client, topic, message):
-    global cmd
+    global cmd, status
 
     # uart0 = machine.UART(0, 115200)
     # uart0.write(message, len(message))
-
-    cmd = eval(str(message, 'utf8'))
-    # 只处理属于本网关id的消息
-    if status['gateway_id'] == cmd['data']['gateway_id']:
-        if cmd['cmd'] == 'ScheckStatus':
-            return 
+    
+    # 容错：103网络错误
+    try:
+        cmd = eval(str(message, 'utf8'))
+        # 只处理属于本网关id的消息
+        if status['gateway_id'] == cmd['data']['gateway_id']:
+            if cmd['cmd'] == 'ScheckStatus':
+                return 
+            else:
+                util.selectFunction(client, client.evt_topic, cmd)
+                cmd = None
+                return
         else:
-            util.selectFunction(client, evt_topic, cmd)
             cmd = None
             return
-    else:
-        cmd = None
-        return
-        
-def mqtt_client():
-    global cmd, evt_topic
-
-    # 如果配置文件打开失败，删除配置文件重启
-    try:
-        with open('config.json') as load_f:
-            status = ujson.load(load_f)
     except Exception as e:
-        import os
-        os.remove('config.json')
         machine.reset()
-    topic = 'MNZ2V9ORYG/{}/'.format(status['gateway_name'])
+        
+def mqtt_client(gateway_id, clinet_id, mqtt_user, mqtt_pwd):
+    global cmd
+    gc.enable()
+
+    topic = 'MNZ2V9ORYG/{}/'.format(gateway_id)
     sub_topic = (topic + 'control').encode('ascii')
     evt_topic = (topic + 'event').encode('ascii')
 
     # 容错：网络波动或者mqtt会话结束
     try:
-        client = MQTTClient(status['mqtt_clientid'], 'iotcloud-mqtt.gz.tencentdevices.com', 1883, status['mqtt_user'], status['mqtt_pwd'], 60)
+        client = MQTTClient(evt_topic, clinet_id, 'iotcloud-mqtt.gz.tencentdevices.com', 1883, mqtt_user, mqtt_pwd, 120)
         client.set_callback(mqtt_callback)
         client.connect()
         client.subscribe(sub_topic, 1)
         print('MQTT succeed.')
         
         # 设置51键盘操作SPI中断
-        util.monitorKeyboard(client, evt_topic)
+        util.monitorKeyboard(client, evt_topic, gateway_id)
 
         # 设备上线 通知odoo后台
-        mesg = '{{"type": 3, "cmd": "devOnline", "data": {{"gateway_id": "{}"}}}}'.format(status['gateway_id'])
+        mesg = '{{"cmd": "devOnline", "data": {{"gateway_id": "{}"}}}}'.format(gateway_id)
         client.publish(evt_topic, mesg)
 
         ticks = 0
         gc.collect()
         gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         util.send('#3#001#@')
+        util.send('#3#003#@')
         while True:
             if cmd != None:
                 util.selectFunction(client, evt_topic, cmd)
@@ -112,27 +110,19 @@ def mqtt_client():
             
             ticks += 1
 
-            if ticks >= (60 / 2):
+            if ticks >= (50 / 2):
                 client.ping()
                 gc.collect()
                 gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
                 ticks = 0
     except Exception as e:
-        # MQTT 连接失败，重新向Odoo后台请求MQTT的相关参数, 重启
-        try:
-            with open("config.json","rw") as dump_f:
-                status = ujson.load(dump_f)
-                status['mqtt_pwd'] = ''
-                ujson.dump(status, dump_f)
-                dump_f.close()
-        except Exception as e:
-            machine.reset()
-        util.send('#3#000#@')
+        # MQTT 连接失败，重新向Odoo后台请求MQTT的相关参数
+        machine.reset()
 
 def parseHeader(headerLine, ):
     kwDict = {}
     reg_content = '''
-HTTP/1.x 200 ok
+HTTP/1.x 200 ok 
 Content-Type: text/html
 
 '''
@@ -140,7 +130,7 @@ Content-Type: text/html
         reg_content += f.read()
         f.close()
 
-    time.sleep(1)  # wait 1 seconds 
+    time.sleep(1)
     bytesline = headerLine
     headerLine = headerLine.decode('ascii')
 
@@ -163,7 +153,8 @@ Content-Type: text/html
             kwDict[kwlist[0]] =  kwlist[1]
         return kwDict
 # 热点模式 设置WIFI名称密码
-def httpServer(util):
+def httpServer():
+    global status
     # 通知51 亮红灯
     util.send('#3#002#@')
     template = """HTTP/1.1 200 OK Content-Length: {length}
@@ -219,8 +210,7 @@ def httpServer(util):
                 data = "{}('{}')" .format(cb, ujson.dumps(status))
                 cb = None
             else:
-                data = '<p>{}<p>'.format(status['gateway_name'])
-                print(data)
+                data = '<p>Successfully Set Wifi.<p>'
 
             response = template.format(length=len(data), json=data)
 
@@ -272,18 +262,16 @@ Cookie: frontend_lang=zh_CN; session_id=767a0763e8312a1dfa9e612c4be6aeae0864faa5
 {data}"""
     data = 'gateway_id={}&gateway_mac={}'.format(status['gateway_id'], status['gateway_mac'])
     triple = http_post('http://erp.xiao-sun.cn/api/xiaosun/getMqttInfo/', template.format(length=len(data), data=data))
-    if not triple:
-        return None
     
     return triple['msg']
 
-if __name__ == '__main__':
+def run():
+    global status
     ap_if = network.WLAN(network.AP_IF)
     sta_if = network.WLAN(network.STA_IF)
     try:
         with open("config.json",'r') as load_f:
             status = ujson.load(load_f)
-        load_f.close()
     except OSError:
         createJson()
     if status['ssid'] == '' or status['skey'] == '':      # AP Mode
@@ -303,33 +291,30 @@ if __name__ == '__main__':
                 break
             time.sleep_ms(20)
             t2 = t1
-    util = Util(status['gateway_id'])
 
     if sta_if.isconnected():
         gc.collect()
         gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         time.sleep(1)
-        if status['mqtt_pwd'] != '':
-            mqtt_client()
-        # 配置or更新mqtt用户名、密码
-        result = login()
-        status['mqtt_clientid'] = result["mqtt_clientid"]
-        status['mqtt_user'] = result["mqtt_user"]
-        status['mqtt_pwd'] = result["mqtt_pwd"]
-        status['gateway_id'] = result["gateway_id"]
-        # 同步服务器时间
-        tm = tuple(result["server_time"])
-        machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3] + 8, tm[4], tm[5], 0))
-        saveJson()
-        mqtt_client()
-    elif status['gateway_port'] == '80':
+        if status['mqtt_pwd'] == '':
+            # 配置or更新mqtt用户名、密码
+            result = login()
+            status['mqtt_clientid'] = result["mqtt_clientid"]
+            status['mqtt_user'] = result["mqtt_user"]
+            status['mqtt_pwd'] = result["mqtt_pwd"]
+            status['gateway_id'] = result["gateway_id"]
+            # 同步服务器时间
+            tm = tuple(result["server_time"])
+            machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3] + 8, tm[4], tm[5], 0))
+            saveJson()
+        mqtt_client(status['gateway_id'], status['mqtt_clientid'], status['mqtt_user'], status['mqtt_pwd'])
+    else:
+        # AP MODE
         ap_if.active(True)
         sta_if.active(False)
-        ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
-        httpServer(util)
-    else:                             # AP Mode
-        ap_if.active(True)
-        sta_if.active(False)
-        ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie' )
+        ap_if.config(essid = '{}'.format(status['gateway_name']), password = 'harmonie')
         status['gateway_port'] = '80'
-        httpServer(util)
+        httpServer()
+
+if __name__ == '__main__':
+    run()

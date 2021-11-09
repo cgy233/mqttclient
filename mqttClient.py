@@ -8,10 +8,11 @@ class MQTTException(Exception):
 
 class MQTTClient:
 
-    def __init__(self, client_id, server, port=0, user=None, password=None, keepalive=1000,
+    def __init__(self, evt_topic, client_id, server, port=0, user=None, password=None, keepalive=1000,
                  ssl=False, ssl_params={}):
         if port == 0:
             port = 8883 if ssl else 1883
+        self.evt_topic = evt_topic
         self.client_id = client_id
         self.sock = None
         self.server = server
@@ -105,7 +106,6 @@ class MQTTClient:
     def publish(self, topic, msg, retain=False, qos=1):
         # print('pulish:')
         # print(msg)
-        # print("In release...")
         pkt = bytearray(b"\x30\0\0\0")
         pkt[0] |= qos << 1 | retain
         sz = 2 + len(topic) + len(msg)
