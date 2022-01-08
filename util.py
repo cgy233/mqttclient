@@ -6,15 +6,15 @@ from machine import Pin, SPI
 
 class Util():
 	def __init__(self):
-	    self.gateway_id = ''
-	    self.check_id = ''
-	    self.check_mac = ''
-	    self.check_flag = 1
-	    self.check_over_flag = False
-	    self.lock_status_list = [] 
-	    self.spi = SPI(baudrate=5000, polarity=0, phase=0, sck=Pin(16), mosi=Pin(14), miso=Pin(12),bits=8)
-	    self.cs_pin = Pin(13,Pin.OUT)
-	    self.r_pin = Pin(5,Pin.IN)
+		self.gateway_id = ''
+		self.check_id = ''
+		self.check_mac = ''
+		self.check_flag = 1
+		self.check_over_flag = False
+		self.lock_status_list = [] 
+		self.spi = SPI(baudrate=5000, polarity=0, phase=0, sck=Pin(16), mosi=Pin(14), miso=Pin(12),bits=8)
+		self.cs_pin = Pin(13,Pin.OUT)
+		self.r_pin = Pin(5,Pin.IN)
 
 	# 上报单个设备的状态
 	def reportStatu(self, mesg):
@@ -152,6 +152,7 @@ class Util():
 		self.lock_status_list = []
 	# 根据Odoo后台下发指令进行操作
 	def selectFunction(self, client, topic, data):
+		# 命令集
 		func_dict = {
 		"Sunlock": self.lock_oem,
 		"Slock": self.lock_oem,
@@ -163,7 +164,7 @@ class Util():
 		'over': 'over'
 		}
 		mesg = '{{"cmd": "{}", "data": {{"gateway_id": {}}}}}'
-		# 指令字典里面找不到命令
+		# 命令集中不存在
 		if data['cmd'] not in func_dict.keys():
 			# mesg = mesg.format("cmdNotFind", self.gateway_id)
 			# client.publish(topic, mesg)
